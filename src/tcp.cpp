@@ -1,6 +1,5 @@
 #include "cppuv/tcp.hpp"
 #include <algorithm>
-#include <array>
 #include <memory>
 #include <limits>
 #include <stdexcept>
@@ -34,7 +33,11 @@ namespace cppuv
         {
             throw std::logic_error("TCP connection is closed or already started");
         }
-
+        if (weak_from_this().expired())
+        {
+            throw std::logic_error(
+                "TcpConnection must be owned by std::shared_ptr before start()");
+        }
         if (!onData)
         {
             throw std::invalid_argument("TCP data callback cannot be empty");
@@ -45,11 +48,7 @@ namespace cppuv
         onError_ = std::move(onError);
 
         const auto completionKey = reinterpret_cast<ULONG_PTR>(this);
-
-        loop_->associateHandle(
-            reinterpret_cast<HANDLE>(socket_),
-            completionKey);
-
+        loop_->associateHandle(reinterpret_cast<HANDLE>(socket_), completionKey);
         loop_->registerCompletionHandler(
             completionKey,
             [this](const Completion &completion)
@@ -57,18 +56,9 @@ namespace cppuv
                 handleCompletion(completion);
             });
 
+        handlerRegistered_ = true;
         started_ = true;
-
-        try
-        {
-            postRead();
-        }
-        catch (...)
-        {
-            loop_->unregisterCompletionHandler(completionKey);
-            started_ = false;
-            throw;
-        }
+        postRead();
     }
 
     void TcpConnection::write(std::string data, WriteCallback onWritten)
@@ -77,23 +67,18 @@ namespace cppuv
         {
             throw std::logic_error("Cannot write to a closed TCP connection");
         }
-
         if (data.empty())
         {
-            if (onWritten)
-            {
-                onWritten();
-            }
+            if (onWritten) onWritten();
             return;
         }
 
-        writes_.push_back(std::move(data));
-        writeCallbacks_.push_back(std::move(onWritten));
+        writes_.push_back(PendingWrite{
+            std::make_shared<std::string>(std::move(data)),
+            std::move(onWritten),
+            0});
 
-        if (!writing_)
-        {
-            postWrite();
-        }
+        if (!writing_) postWrite();
     }
 
     void TcpConnection::pauseRead()
@@ -103,30 +88,20 @@ namespace cppuv
 
     void TcpConnection::resumeRead()
     {
-        if (closed_)
-        {
-            return;
-        }
-
+        if (closed_) return;
         readPaused_ = false;
         postRead();
     }
 
     void TcpConnection::close()
     {
-        if (closed_)
-        {
-            return;
-        }
+        if (closed_) return;
 
         closed_ = true;
 
-        if (started_ && loop_ != nullptr)
-        {
-            loop_->unregisterCompletionHandler(
-                reinterpret_cast<ULONG_PTR>(this));
-        }
-
+        // closesocket cancels outstanding overlapped socket operations. Their
+        // completion packets still own the operation objects and drain the
+        // connection's pending-operation count before its handler is removed.
         if (socket_ != INVALID_SOCKET)
         {
             shutdown(socket_, SD_BOTH);
@@ -134,214 +109,221 @@ namespace cppuv
             socket_ = INVALID_SOCKET;
         }
 
+        // In-flight WSASend buffers are independently owned by IoOperation.
+        // Queued writes that have not been submitted can be discarded now.
         writes_.clear();
-        writeCallbacks_.clear();
-        onData_ = {};
-        onClose_ = {};
-        onError_ = {};
+        finishCloseIfDrained();
     }
 
     void TcpConnection::postRead()
     {
-        if (closed_ || reading_ || readPaused_ || loop_->isStopping())
-        {
-            return;
-        }
+        if (closed_ || reading_ || readPaused_ || loop_->isStopping()) return;
 
-        readOperation_.overlapped = {};
-        readOperation_.buffer.buf = readOperation_.data.data();
-        readOperation_.buffer.len =
-            static_cast<ULONG>(readOperation_.data.size());
+        auto operation = std::make_unique<IoOperation>(IoOperation::Kind::Read);
+        operation->keepAlive = shared_from_this();
+        operation->buffer.buf = operation->readData.data();
+        operation->buffer.len = static_cast<ULONG>(operation->readData.size());
 
         DWORD flags = 0;
         DWORD bytesReceived = 0;
-
         reading_ = true;
+        ++pendingOperations_;
 
         const int result = WSARecv(
             socket_,
-            &readOperation_.buffer,
+            &operation->buffer,
             1,
             &bytesReceived,
             &flags,
-            &readOperation_.overlapped,
+            &operation->overlapped,
             nullptr);
 
         if (result == SOCKET_ERROR)
         {
             const int error = WSAGetLastError();
-
             if (error != WSA_IO_PENDING)
             {
                 reading_ = false;
-                fail(error, "WSARecv failed");
+                --pendingOperations_;
+                operation.reset();
+                fail(error);
+                return;
             }
         }
+
+        operation.release();
     }
 
     void TcpConnection::postWrite()
     {
-        if (closed_ || writing_ || writes_.empty() || loop_->isStopping())
-        {
-            return;
-        }
+        if (closed_ || writing_ || writes_.empty() || loop_->isStopping()) return;
 
-        auto &front = writes_.front();
-        const auto remaining = front.size() - writeOffset_;
+        auto &pending = writes_.front();
+        auto operation = std::make_unique<IoOperation>(IoOperation::Kind::Write);
+        operation->keepAlive = shared_from_this();
+        operation->writeData = pending.data;
+        operation->writeOffset = pending.offset;
 
-        writeOperation_.overlapped = {};
-        writeOperation_.buffer.buf = front.data() + writeOffset_;
-        writeOperation_.buffer.len = static_cast<ULONG>(
+        const auto remaining = pending.data->size() - pending.offset;
+        operation->buffer.buf = pending.data->data() + pending.offset;
+        operation->buffer.len = static_cast<ULONG>(
             std::min<std::size_t>(
                 remaining,
                 static_cast<std::size_t>(std::numeric_limits<ULONG>::max())));
 
         DWORD bytesSent = 0;
         writing_ = true;
+        ++pendingOperations_;
 
         const int result = WSASend(
             socket_,
-            &writeOperation_.buffer,
+            &operation->buffer,
             1,
             &bytesSent,
             0,
-            &writeOperation_.overlapped,
+            &operation->overlapped,
             nullptr);
 
         if (result == SOCKET_ERROR)
         {
             const int error = WSAGetLastError();
-
             if (error != WSA_IO_PENDING)
             {
                 writing_ = false;
-                fail(error, "WSASend failed");
+                --pendingOperations_;
+                operation.reset();
+                fail(error);
+                return;
             }
         }
+
+        operation.release();
     }
 
     void TcpConnection::handleCompletion(const Completion &completion)
     {
-        if (closed_ || completion.overlapped == nullptr)
+        auto self = shared_from_this();
+        if (completion.overlapped == nullptr) return;
+
+        std::unique_ptr<IoOperation> operation(
+            reinterpret_cast<IoOperation *>(completion.overlapped));
+
+        try
         {
-            return;
+            if (operation->kind == IoOperation::Kind::Read)
+            {
+                handleRead(*operation, completion);
+            }
+            else
+            {
+                handleWrite(*operation, completion);
+            }
+        }
+        catch (...)
+        {
+            if (pendingOperations_ > 0) --pendingOperations_;
+            finishCloseIfDrained();
+            throw;
         }
 
-        if (completion.overlapped == &readOperation_.overlapped)
-        {
-            handleRead(completion);
-        }
-        else if (completion.overlapped == &writeOperation_.overlapped)
-        {
-            handleWrite(completion);
-        }
+        if (pendingOperations_ > 0) --pendingOperations_;
+        finishCloseIfDrained();
     }
 
-    void TcpConnection::handleRead(const Completion &completion)
+    void TcpConnection::handleRead(
+        IoOperation &operation,
+        const Completion &completion)
     {
         reading_ = false;
 
+        if (closed_) return;
         if (!completion.succeeded())
         {
-            fail(static_cast<int>(completion.error), "TCP read failed");
+            fail(static_cast<int>(completion.error));
             return;
         }
-
         if (completion.bytesTransferred == 0)
         {
-            auto callback = onClose_;
             close();
-
-            if (callback)
-            {
-                callback();
-            }
             return;
         }
 
         const std::string_view data(
-            readOperation_.data.data(),
+            operation.readData.data(),
             completion.bytesTransferred);
 
-        if (onData_)
-        {
-            onData_(*this, data);
-        }
+        if (onData_) onData_(*this, data);
 
-        if (!closed_ && !readPaused_ && !loop_->isStopping())
-        {
-            postRead();
-        }
+        if (!closed_ && !readPaused_ && !loop_->isStopping()) postRead();
     }
 
-    void TcpConnection::handleWrite(const Completion &completion)
+    void TcpConnection::handleWrite(
+        IoOperation &operation,
+        const Completion &completion)
     {
         writing_ = false;
 
+        if (closed_) return;
         if (!completion.succeeded())
         {
-            fail(static_cast<int>(completion.error), "TCP write failed");
+            fail(static_cast<int>(completion.error));
             return;
         }
+        if (writes_.empty()) return;
 
-        if (writes_.empty())
-        {
-            return;
-        }
-
-        const auto remaining = writes_.front().size() - writeOffset_;
+        auto &pending = writes_.front();
+        const auto remaining = pending.data->size() - pending.offset;
         const auto sent = static_cast<std::size_t>(completion.bytesTransferred);
 
-        if (sent == 0)
+        if (sent == 0 || sent > remaining)
         {
-            fail(WSAECONNRESET, "TCP write completed without sending data");
+            fail(sent == 0 ? WSAECONNRESET : WSAEINVAL);
             return;
         }
 
-        if (sent > remaining)
-        {
-            fail(WSAEINVAL, "TCP write completion exceeded the pending buffer");
-            return;
-        }
-
-        writeOffset_ += sent;
-
-        if (writeOffset_ < writes_.front().size())
+        pending.offset += sent;
+        if (pending.offset < pending.data->size())
         {
             postWrite();
             return;
         }
 
+        auto callback = std::move(pending.callback);
         writes_.pop_front();
-        writeOffset_ = 0;
 
-        auto callback = std::move(writeCallbacks_.front());
-        writeCallbacks_.pop_front();
-
-        if (callback)
-        {
-            callback();
-        }
-
-        if (!closed_ && !loop_->isStopping())
-        {
-            postWrite();
-        }
-    }
-
-    void TcpConnection::fail(int error, const char *operation)
-    {
-        auto callback = onError_;
-        const std::error_code code(error, std::system_category());
-
-        close();
-
-        if (callback)
-        {
-            callback(code);
-        }
+        if (callback) callback();
+        if (!closed_ && !loop_->isStopping()) postWrite();
 
         (void)operation;
+    }
+
+    void TcpConnection::fail(int error)
+    {
+        const std::error_code code(error, std::system_category());
+        auto callback = onError_;
+        close();
+        if (callback) callback(code);
+    }
+
+    void TcpConnection::finishCloseIfDrained()
+    {
+        if (!closed_ || pendingOperations_ != 0) return;
+
+        if (handlerRegistered_ && loop_ != nullptr)
+        {
+            loop_->unregisterCompletionHandler(
+                reinterpret_cast<ULONG_PTR>(this));
+            handlerRegistered_ = false;
+        }
+
+        if (!closeNotified_)
+        {
+            closeNotified_ = true;
+            auto callback = std::move(onClose_);
+            onData_ = {};
+            onError_ = {};
+            if (callback) callback();
+        }
     }
 
     struct TcpServer::AcceptOperation
