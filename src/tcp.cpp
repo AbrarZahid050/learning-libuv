@@ -19,11 +19,13 @@ namespace cppuv
         }
     }
 
+    // Request shutdown when the connection wrapper is destroyed.
     TcpConnection::~TcpConnection()
     {
         close();
     }
 
+    // Validate ownership, register the IOCP handler, and begin receiving.
     void TcpConnection::start(
         DataCallback onData,
         CloseCallback onClose,
@@ -79,6 +81,7 @@ namespace cppuv
         refreshIdleTimer();
     }
 
+    // Refresh the idle deadline whenever data arrives from the peer.
     void TcpConnection::refreshIdleTimer()
     {
         if (idleTimer_ != 0)
@@ -136,11 +139,13 @@ namespace cppuv
         if (!writing_) postWrite();
     }
 
+    // Temporarily stop scheduling additional receive operations.
     void TcpConnection::pauseRead()
     {
         readPaused_ = true;
     }
 
+    // Resume receiving when application and backpressure state allow it.
     void TcpConnection::resumeRead()
     {
         if (closed_) return;
@@ -148,6 +153,7 @@ namespace cppuv
         postRead();
     }
 
+    // Apply read-side backpressure using separate high and low queue thresholds.
     void TcpConnection::updateReadBackpressure()
     {
         if (closed_) return;
@@ -165,6 +171,7 @@ namespace cppuv
         }
     }
 
+    // Begin socket shutdown while allowing outstanding overlapped I/O to drain.
     void TcpConnection::close()
     {
         if (closed_) return;
@@ -199,6 +206,7 @@ namespace cppuv
         finishCloseIfDrained();
     }
 
+    // Submit one receive operation whose buffer remains alive until IOCP completion.
     void TcpConnection::postRead()
     {
         if (closed_ || reading_ || readPaused_ || backpressurePaused_ ||
@@ -243,6 +251,7 @@ namespace cppuv
         operation.release();
     }
 
+    // Submit the unsent portion of the first queued payload.
     void TcpConnection::postWrite()
     {
         if (closed_ || writing_ || writes_.empty() || loop_->isStopping()) return;
@@ -325,6 +334,7 @@ namespace cppuv
         finishCloseIfDrained();
     }
 
+    // Process received bytes, peer shutdown, and receive errors.
     void TcpConnection::handleRead(
         IoOperation &operation,
         const Completion &completion)
@@ -356,6 +366,7 @@ namespace cppuv
         if (!closed_ && !readPaused_ && !loop_->isStopping()) postRead();
     }
 
+    // Account for partial sends and advance the ordered write queue.
     void TcpConnection::handleWrite(
         IoOperation &operation,
         const Completion &completion)
@@ -413,6 +424,7 @@ namespace cppuv
         if (callback) callback(code);
     }
 
+    // Finalize only after every overlapped operation has completed.
     void TcpConnection::finishCloseIfDrained()
     {
         if (!closed_ || pendingOperations_ != 0) return;
@@ -436,6 +448,7 @@ namespace cppuv
         }
     }
 
+    // Store the AcceptEx OVERLAPPED structure and address buffer together.
     struct TcpServer::AcceptOperation
     {
         OVERLAPPED overlapped{};
@@ -447,6 +460,7 @@ namespace cppuv
         std::array<char, addressLength * 2> addressBuffer{};
     };
 
+    // Create an overlapped IPv4 TCP listening socket.
     TcpServer::TcpServer()
     {
         socket_ = WSASocketW(
@@ -466,6 +480,7 @@ namespace cppuv
         }
     }
 
+    // Stop accepting and release the listening socket.
     TcpServer::~TcpServer()
     {
         stopAccepting();
@@ -530,6 +545,7 @@ namespace cppuv
         }
     }
 
+    // Load AcceptEx and connect the listener to the event loop.
     void TcpServer::startAccepting(
         Loop &loop,
         ConnectionCallback onConnection,
@@ -601,6 +617,7 @@ namespace cppuv
         }
     }
 
+    // Cancel the pending accept while preserving its completion cleanup path.
     void TcpServer::stopAccepting()
     {
         accepting_ = false;
@@ -623,6 +640,7 @@ namespace cppuv
         }
     }
 
+    // Submit one AcceptEx request while the server is accepting.
     void TcpServer::postAccept()
     {
         if (!accepting_ || loop_ == nullptr || loop_->isStopping() ||
