@@ -18,53 +18,61 @@ int main()
 
         cppuv::Loop loop;
         cppuv::TcpServer server;
+
+        // Keep each connection alive while its overlapped operations are active.
+        // This simple demo retains closed connections until the process exits.
         std::vector<std::shared_ptr<cppuv::TcpConnection>> connections;
+        std::size_t nextClientId = 1;
 
         server.listen(8080);
 
         std::cout << "TCP echo server listening on 127.0.0.1:8080\n";
+        std::cout << "Supports multiple clients. Press Ctrl+C to stop.\n";
 
         server.startAccepting(
             loop,
-            [&loop, &server, &connections](SOCKET clientSocket)
+            [&loop, &connections, &nextClientId](SOCKET clientSocket)
             {
-                std::cout << "Client connected! Socket: "
-                          << clientSocket << '\n';
+                const auto clientId = nextClientId++;
 
-                // Keep the connection alive for the duration of the loop.
+                std::cout << "[client " << clientId
+                          << "] connected (socket " << clientSocket << ")\n";
+
                 auto connection =
                     std::make_shared<cppuv::TcpConnection>(loop, clientSocket);
                 connections.push_back(connection);
 
-                // This demo handles one client, then stops cleanly.
-                server.stopAccepting();
-
                 connection->start(
-                    [&loop](
+                    [clientId](
                         cppuv::TcpConnection &client,
                         std::string_view data)
                     {
-                        std::cout << "Received: " << data << '\n';
+                        std::cout << "[client " << clientId
+                                  << "] received " << data.size()
+                                  << " bytes: " << data << '\n';
 
-                        // Pause reads so this one-shot demo has no outstanding
-                        // read when the write completion stops the event loop.
+                        // Serialize this demo's read/write cycle. It keeps
+                        // one operation in flight per connection at a time.
                         client.pauseRead();
 
                         client.write(
                             std::string(data),
-                            [&loop]()
+                            [&client, clientId]()
                             {
-                                std::cout << "Echo sent successfully.\n";
-                                loop.stop();
+                                std::cout << "[client " << clientId
+                                          << "] echo sent\n";
+                                client.resumeRead();
                             });
                     },
-                    []()
+                    [clientId]()
                     {
-                        std::cout << "Client disconnected.\n";
+                        std::cout << "[client " << clientId
+                                  << "] disconnected\n";
                     },
-                    [](const std::error_code &error)
+                    [clientId](const std::error_code &error)
                     {
-                        std::cerr << "Connection error: "
+                        std::cerr << "[client " << clientId
+                                  << "] connection error: "
                                   << error.message() << '\n';
                     });
             },
@@ -73,7 +81,7 @@ int main()
                 std::cerr << "Accept error: " << error.message() << '\n';
             });
 
-        std::cout << "Waiting for a client connection...\n";
+        std::cout << "Waiting for client connections...\n";
         loop.run();
 
         std::cout << "Event loop stopped.\n";
