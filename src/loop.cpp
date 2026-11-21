@@ -1,6 +1,7 @@
 #include "cppuv/loop.hpp"
 #include <algorithm>
 #include <chrono>
+#include <stdexcept>
 #include <utility>
 
 namespace cppuv
@@ -27,6 +28,43 @@ namespace cppuv
         ULONG_PTR completionKey)
     {
         poller_.associate(handle, completionKey);
+    }
+
+    void Loop::registerCompletionHandler(
+        ULONG_PTR completionKey,
+        CompletionHandler handler)
+    {
+        if (completionKey == 0)
+        {
+            throw std::invalid_argument("IOCP completion key 0 is reserved");
+        }
+
+        if (!handler)
+        {
+            throw std::invalid_argument("Completion handler cannot be empty");
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        const auto [it, inserted] =
+            completionHandlers_.emplace(completionKey, std::move(handler));
+
+        if (!inserted)
+        {
+            throw std::logic_error("An IOCP handler is already registered for this key");
+        }
+    }
+
+    void Loop::unregisterCompletionHandler(ULONG_PTR completionKey)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        completionHandlers_.erase(completionKey);
+    }
+
+    bool Loop::isStopping() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return stopping_;
     }
 
     Loop::TimerId Loop::scheduleTimer(
@@ -167,7 +205,6 @@ namespace cppuv
                         }
                         else
                         {
-                            // Calculate the time until the next timer.
                             auto remaining =
                                 std::chrono::ceil<std::chrono::milliseconds>(
                                     deadline - now);
@@ -207,9 +244,7 @@ namespace cppuv
                         activeTimerIds_.find(timer.id) !=
                             activeTimerIds_.end())
                     {
-
                         timer.deadline = Clock::now() + timer.interval;
-
                         timers_.push(std::move(timer));
                     }
                 }
@@ -218,10 +253,26 @@ namespace cppuv
             }
 
             const auto completion = poller_.wait(timeout);
-            if (completion.has_value())
+            if (!completion.has_value() || completion->isWake())
             {
-                // Currently, only wake notifications are expected.
-                // TCP completion dispatch will be implemented next.
+                continue;
+            }
+
+            CompletionHandler handler;
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                const auto it = completionHandlers_.find(completion->key);
+
+                if (it != completionHandlers_.end())
+                {
+                    handler = it->second;
+                }
+            }
+
+            if (handler)
+            {
+                handler(*completion);
             }
         }
     }
