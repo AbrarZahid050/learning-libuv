@@ -72,6 +72,7 @@ namespace cppuv
             Kind kind;
             std::array<char, 8192> readData{};
             std::shared_ptr<std::string> writeData;
+            std::shared_ptr<TcpConnection> keepAlive;
             std::size_t writeOffset = 0;
         };
 
@@ -148,7 +149,6 @@ namespace cppuv
         ErrorCallback onError_;
         AcceptOperation *pendingAccept_ = nullptr;
         bool accepting_ = false;
-        bool handlerRegistered_ = false;
     };
 
 }
