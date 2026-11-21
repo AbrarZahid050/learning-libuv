@@ -164,9 +164,15 @@ namespace cppuv
             {
                 std::unique_lock<std::mutex> lock(mutex_);
 
-                if (stopping_ && tasks_.empty())
+                if (stopping_ && tasks_.empty() && pendingOperations_ == 0)
                 {
                     return;
+                }
+
+                if (stopping_)
+                {
+                    while (!timers_.empty()) timers_.pop();
+                    activeTimerIds_.clear();
                 }
 
                 if (!tasks_.empty())
@@ -277,11 +283,34 @@ namespace cppuv
         }
     }
 
+    bool Loop::beginOperation()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) return false;
+        ++pendingOperations_;
+        return true;
+    }
+
+    void Loop::endOperation()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (pendingOperations_ == 0)
+            {
+                throw std::logic_error("Loop operation counter underflow");
+            }
+            --pendingOperations_;
+        }
+
+        poller_.wake();
+    }
+
     void Loop::stop()
     {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             stopping_ = true;
+            activeTimerIds_.clear();
         }
 
         poller_.wake();
