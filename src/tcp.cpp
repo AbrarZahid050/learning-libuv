@@ -73,11 +73,18 @@ namespace cppuv
             return;
         }
 
+        if (data.size() > std::numeric_limits<std::size_t>::max() - queuedWriteBytes_)
+        {
+            throw std::length_error("TCP write queue size overflow");
+        }
+
+        queuedWriteBytes_ += data.size();
         writes_.push_back(PendingWrite{
             std::make_shared<std::string>(std::move(data)),
             std::move(onWritten),
             0});
 
+        updateReadBackpressure();
         if (!writing_) postWrite();
     }
 
@@ -91,6 +98,23 @@ namespace cppuv
         if (closed_) return;
         readPaused_ = false;
         postRead();
+    }
+
+    void TcpConnection::updateReadBackpressure()
+    {
+        if (closed_) return;
+
+        if (!backpressurePaused_ &&
+            queuedWriteBytes_ >= kWriteHighWatermark)
+        {
+            backpressurePaused_ = true;
+        }
+        else if (backpressurePaused_ &&
+                 queuedWriteBytes_ <= kWriteLowWatermark)
+        {
+            backpressurePaused_ = false;
+            postRead();
+        }
     }
 
     void TcpConnection::close()
@@ -112,12 +136,14 @@ namespace cppuv
         // In-flight WSASend buffers are independently owned by IoOperation.
         // Queued writes that have not been submitted can be discarded now.
         writes_.clear();
+        queuedWriteBytes_ = 0;
         finishCloseIfDrained();
     }
 
     void TcpConnection::postRead()
     {
-        if (closed_ || reading_ || readPaused_ || loop_->isStopping()) return;
+        if (closed_ || reading_ || readPaused_ || backpressurePaused_ ||
+            loop_->isStopping()) return;
 
         auto operation = std::make_unique<IoOperation>(IoOperation::Kind::Read);
         operation->keepAlive = shared_from_this();
@@ -291,8 +317,11 @@ namespace cppuv
         }
 
         pending.offset += sent;
+        queuedWriteBytes_ -= sent;
+
         if (pending.offset < pending.data->size())
         {
+            updateReadBackpressure();
             postWrite();
             return;
         }
@@ -301,6 +330,10 @@ namespace cppuv
         writes_.pop_front();
 
         if (callback) callback();
+
+        // A write callback may enqueue more data, so evaluate the queue only
+        // after it has returned.
+        updateReadBackpressure();
         if (!closed_ && !loop_->isStopping()) postWrite();
 
         (void)operation;
