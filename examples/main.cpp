@@ -143,7 +143,7 @@ int main()
 
             loop.post([&loop, &server, &connections]()
             {
-                std::cout << "\\nShutdown requested. Closing listener and clients...\\n";
+                std::cout << "\nShutdown requested. Closing listener and clients...\n";
 
                 server.stopAccepting();
 
@@ -167,7 +167,7 @@ int main()
         CloseHandle(shutdownEvent);
         shutdownEvent = nullptr;
 
-        std::cout << "All pending I/O has drained. Event loop stopped.\\n";
+        std::cout << "All pending I/O has drained. Event loop stopped.\n";
     }
     catch (const std::system_error &error)
     {
