@@ -58,6 +58,7 @@ namespace cppuv
 
         handlerRegistered_ = true;
         started_ = true;
+        state_ = State::Connected;
         postRead();
     }
 
@@ -123,6 +124,11 @@ namespace cppuv
         if (closed_) return;
 
         closed_ = true;
+        state_ = State::Closing;
+        if (closeReason_ == CloseReason::None)
+        {
+            closeReason_ = CloseReason::Local;
+        }
 
         // closesocket cancels outstanding overlapped socket operations. Their
         // completion packets still own the operation objects and drain the
@@ -280,6 +286,7 @@ namespace cppuv
         }
         if (completion.bytesTransferred == 0)
         {
+            closeReason_ = CloseReason::Remote;
             close();
             return;
         }
@@ -343,6 +350,7 @@ namespace cppuv
     void TcpConnection::fail(int error)
     {
         const std::error_code code(error, std::system_category());
+        closeReason_ = CloseReason::Error;
         auto callback = onError_;
         close();
         if (callback) callback(code);
@@ -351,6 +359,8 @@ namespace cppuv
     void TcpConnection::finishCloseIfDrained()
     {
         if (!closed_ || pendingOperations_ != 0) return;
+
+        state_ = State::Closed;
 
         if (handlerRegistered_ && loop_ != nullptr)
         {
