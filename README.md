@@ -75,6 +75,29 @@ In C++ source files, include the umbrella header:
 
 The umbrella header exposes the current public event-loop, TCP, and Winsock APIs. Applications that need finer-grained includes can include the individual headers under cppuv/.
 
+
+## Verify the installed package with a separate application
+
+The consumer example is an independent CMake project. It finds the installed package and links to `cppuv::cppuv`; it does not include or compile files from the library's `src/` directory.
+
+From the repository root, first build and install CppUV:
+
+```powershell
+cmake -S . -B build -G "MinGW Makefiles" -DCPPUV_BUILD_EXAMPLES=ON
+cmake --build build
+cmake --install build --prefix "$PWD\\install"
+```
+
+Then configure and build the separate consumer project:
+
+```powershell
+cmake -S examples/consumer -B consumer-build -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH="$PWD\\install"
+cmake --build consumer-build
+.\\consumer-build\\cppuv_consumer.exe
+```
+
+A successful run prints a message from the consumer callback and exits after the event loop stops. This checks the installed headers, exported CMake target, static library, and transitive link dependencies together.
+
 ## Project structure
 
 - include/cppuv/ — public C++ headers
