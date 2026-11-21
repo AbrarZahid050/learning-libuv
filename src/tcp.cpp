@@ -124,6 +124,8 @@ namespace cppuv
         operation->buffer.buf = operation->readData.data();
         operation->buffer.len = static_cast<ULONG>(operation->readData.size());
 
+        if (!loop_->beginOperation()) return;
+
         DWORD flags = 0;
         DWORD bytesReceived = 0;
         reading_ = true;
@@ -145,6 +147,7 @@ namespace cppuv
             {
                 reading_ = false;
                 --pendingOperations_;
+                loop_->endOperation();
                 operation.reset();
                 fail(error);
                 return;
@@ -171,6 +174,8 @@ namespace cppuv
                 remaining,
                 static_cast<std::size_t>(std::numeric_limits<ULONG>::max())));
 
+        if (!loop_->beginOperation()) return;
+
         DWORD bytesSent = 0;
         writing_ = true;
         ++pendingOperations_;
@@ -191,6 +196,7 @@ namespace cppuv
             {
                 writing_ = false;
                 --pendingOperations_;
+                loop_->endOperation();
                 operation.reset();
                 fail(error);
                 return;
@@ -223,11 +229,13 @@ namespace cppuv
         catch (...)
         {
             if (pendingOperations_ > 0) --pendingOperations_;
+            loop_->endOperation();
             finishCloseIfDrained();
             throw;
         }
 
         if (pendingOperations_ > 0) --pendingOperations_;
+        loop_->endOperation();
         finishCloseIfDrained();
     }
 
@@ -540,6 +548,12 @@ namespace cppuv
                 "Failed to create accepted TCP socket");
         }
 
+        if (!loop_->beginOperation())
+        {
+            closesocket(operation->acceptedSocket);
+            return;
+        }
+
         DWORD bytesReceived = 0;
 
         const BOOL result = acceptEx_(
@@ -559,6 +573,7 @@ namespace cppuv
             if (error != WSA_IO_PENDING)
             {
                 closesocket(operation->acceptedSocket);
+                loop_->endOperation();
 
                 throw std::system_error(
                     error,
@@ -582,6 +597,7 @@ namespace cppuv
 
         pendingAccept_ = nullptr;
         std::unique_ptr<AcceptOperation> operationGuard(operation);
+        loop_->endOperation();
 
         if (!accepting_)
         {
