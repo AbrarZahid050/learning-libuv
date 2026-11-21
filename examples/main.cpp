@@ -55,13 +55,14 @@ int main()
                         // one operation in flight per connection at a time.
                         client.pauseRead();
 
+                        auto *connection = &client;
                         client.write(
                             std::string(data),
-                            [&client, clientId]()
+                            [connection, clientId]()
                             {
                                 std::cout << "[client " << clientId
                                           << "] echo sent\n";
-                                client.resumeRead();
+                                connection->resumeRead();
                             });
                     },
                     [clientId]()
