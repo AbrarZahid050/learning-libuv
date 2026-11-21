@@ -83,8 +83,12 @@ namespace cppuv
             std::size_t offset = 0;
         };
 
+        static constexpr std::size_t kWriteHighWatermark = 64 * 1024;
+        static constexpr std::size_t kWriteLowWatermark = 32 * 1024;
+
         void postRead();
         void postWrite();
+        void updateReadBackpressure();
         void handleCompletion(const Completion &completion);
         void handleRead(IoOperation &operation, const Completion &completion);
         void handleWrite(IoOperation &operation, const Completion &completion);
@@ -98,9 +102,11 @@ namespace cppuv
         CloseCallback onClose_;
         ErrorCallback onError_;
         std::size_t pendingOperations_ = 0;
+        std::size_t queuedWriteBytes_ = 0;
         bool started_ = false;
         bool reading_ = false;
         bool readPaused_ = false;
+        bool backpressurePaused_ = false;
         bool writing_ = false;
         bool closed_ = false;
         bool handlerRegistered_ = false;
