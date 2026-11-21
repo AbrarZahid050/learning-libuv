@@ -1,22 +1,22 @@
-#include "cppuv/winsock.hpp"
-#include "cppuv/tcp.hpp"
-#include "cppuv/loop.hpp"
-#include <algorithm>
-#include <chrono>
-#include <exception>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <system_error>
-#include <vector>
-#include <thread>
-#include <windows.h>
+#include "cppuv/winsock.hpp" // Import the library API or Windows/C++ facility used below.
+#include "cppuv/tcp.hpp" // Import the library API or Windows/C++ facility used below.
+#include "cppuv/loop.hpp" // Import the library API or Windows/C++ facility used below.
+#include <algorithm> // Import the library API or Windows/C++ facility used below.
+#include <chrono> // Import the library API or Windows/C++ facility used below.
+#include <exception> // Import the library API or Windows/C++ facility used below.
+#include <iostream> // Import the library API or Windows/C++ facility used below.
+#include <memory> // Import the library API or Windows/C++ facility used below.
+#include <string> // Import the library API or Windows/C++ facility used below.
+#include <system_error> // Import the library API or Windows/C++ facility used below.
+#include <vector> // Import the library API or Windows/C++ facility used below.
+#include <thread> // Import the library API or Windows/C++ facility used below.
+#include <windows.h> // Import the library API or Windows/C++ facility used below.
 
-namespace
+    // Keep console-control state and its callback private to this example executable.
 {
-    HANDLE shutdownEvent = nullptr;
+    // The watcher thread waits on this event after Ctrl+C or Ctrl+Break.
 
-    BOOL WINAPI consoleControlHandler(DWORD control)
+    // Windows invokes this callback when the user requests console shutdown.
     {
         if (control == CTRL_C_EVENT || control == CTRL_BREAK_EVENT)
         {
@@ -27,15 +27,18 @@ namespace
     }
 }
 
-int main()
+    // Demonstrate the library by running a multi-client asynchronous TCP echo server.
 {
     try
     {
+        // Initialize Winsock before creating any sockets; its destructor calls WSACleanup.
         cppuv::Winsock winsock;
 
         std::cout << "Winsock initialized!\n";
 
+        // The loop owns the IOCP dispatcher and must outlive all active connections.
         cppuv::Loop loop;
+        // The server accepts sockets and hands each accepted socket to a TcpConnection.
         cppuv::TcpServer server;
 
         // Each pending I/O operation retains its connection. The close callback
@@ -43,11 +46,13 @@ int main()
         std::vector<std::shared_ptr<cppuv::TcpConnection>> connections;
         std::size_t nextClientId = 1;
 
+        // Bind the example server to 127.0.0.1:8080.
         server.listen(8080);
 
         std::cout << "TCP echo server listening on 127.0.0.1:8080\n";
         std::cout << "Supports multiple clients. Press Ctrl+C to stop.\n";
 
+        // Accept clients asynchronously; each callback runs on the event-loop thread.
         server.startAccepting(
             loop,
             [&loop, &connections, &nextClientId](SOCKET clientSocket)
@@ -58,10 +63,12 @@ int main()
                           << "] connected (socket " << clientSocket
                           << ", state=CONNECTED)\n";
 
+                // Wrap the accepted socket in a shared connection before starting I/O.
                 auto connection =
                     std::make_shared<cppuv::TcpConnection>(loop, clientSocket);
                 connections.push_back(connection);
 
+                // Register receive, close, and error callbacks, then start the first read.
                 connection->start(
                     [clientId](
                         cppuv::TcpConnection &client,
@@ -77,6 +84,7 @@ int main()
                         // Keep reading while a write is in flight. TcpConnection
                         // allows one outstanding read and one outstanding write
                         // at the same time, and queues additional writes in order.
+                        // Echo the received bytes; TcpConnection queues and sends them asynchronously.
                         client.write(
                             std::string(data),
                             [clientId]()
@@ -129,6 +137,7 @@ int main()
                     });
 
                 // Close clients that remain inactive for 10 seconds.
+                // Close a client if it sends no inbound data for ten seconds.
                 connection->setIdleTimeout(std::chrono::seconds(10));
             },
             [](const std::error_code &error)
@@ -138,6 +147,7 @@ int main()
 
         std::cout << "Waiting for client connections...\n";
 
+        // Create a manual-reset event used to pass console shutdown to a worker thread.
         shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (shutdownEvent == nullptr)
         {
@@ -147,6 +157,7 @@ int main()
                 "Failed to create shutdown event");
         }
 
+        // Install the Windows console handler only after the event exists.
         if (!SetConsoleCtrlHandler(consoleControlHandler, TRUE))
         {
             const DWORD error = GetLastError();
@@ -160,18 +171,23 @@ int main()
 
         // The console handler only signals an event. This worker transfers
         // shutdown onto the event-loop thread, where socket APIs are used.
+        // Wait outside the event-loop thread, then post shutdown onto the loop.
         std::thread shutdownWatcher([&loop, &server, &connections]()
         {
+            // Block this worker until the console handler signals shutdown.
             WaitForSingleObject(shutdownEvent, INFINITE);
 
+            // post() safely transfers the shutdown sequence to the loop thread.
             loop.post([&loop, &server, &connections]()
             {
                 std::cout << "\nShutdown requested. Closing listener and clients...\n";
 
+                // Cancel the outstanding AcceptEx request before closing client connections.
                 server.stopAccepting();
 
                 // close() callbacks remove entries from connections, so iterate
                 // over a snapshot rather than the vector being modified.
+                // Use a snapshot because close callbacks erase entries from the original vector.
                 const auto activeConnections = connections;
                 for (const auto &connection : activeConnections)
                 {
@@ -179,29 +195,36 @@ int main()
                 }
 
                 // run() now waits for all cancellation completions before exit.
+                // The loop exits only after outstanding I/O cancellation completions drain.
                 loop.stop();
             });
         });
 
+        // This call blocks while tasks, timers, and IOCP completions are dispatched.
         loop.run();
+        // Ensure the shutdown worker has finished before releasing its event handle.
         shutdownWatcher.join();
 
+        // Unregister the console callback before cleaning up its shared event.
         SetConsoleCtrlHandler(consoleControlHandler, FALSE);
         CloseHandle(shutdownEvent);
         shutdownEvent = nullptr;
 
         std::cout << "All pending I/O has drained. Event loop stopped.\n";
     }
+    // Report Windows/IOCP/Winsock failures using their standard error messages.
     catch (const std::system_error &error)
     {
         std::cerr << error.what() << '\n';
         return 1;
     }
+    // Also report validation and other standard C++ exceptions.
     catch (const std::exception &error)
     {
         std::cerr << error.what() << '\n';
         return 1;
     }
 
+    // Signal successful completion to the operating system.
     return 0;
 }
