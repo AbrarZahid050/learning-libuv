@@ -370,6 +370,12 @@ namespace cppuv
                 reinterpret_cast<HANDLE>(socket_),
                 &pendingAccept_->overlapped);
 
+            if (pendingAccept_->acceptedSocket != INVALID_SOCKET)
+            {
+                closesocket(pendingAccept_->acceptedSocket);
+                pendingAccept_->acceptedSocket = INVALID_SOCKET;
+            }
+
             if (loop_ != nullptr)
             {
                 loop_->unregisterCompletionHandler(
