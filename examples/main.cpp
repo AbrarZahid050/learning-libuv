@@ -54,7 +54,8 @@ int main()
                 const auto clientId = nextClientId++;
 
                 std::cout << "[client " << clientId
-                          << "] connected (socket " << clientSocket << ")\n";
+                          << "] connected (socket " << clientSocket
+                          << ", state=CONNECTED)\n";
 
                 auto connection =
                     std::make_shared<cppuv::TcpConnection>(loop, clientSocket);
@@ -85,8 +86,23 @@ int main()
                     },
                     [&connections, connectionPtr = connection.get(), clientId]()
                     {
-                        std::cout << "[client " << clientId
-                                  << "] disconnected\n";
+                        std::cout << "[client " << clientId << "] ";
+                        switch (connectionPtr->closeReason())
+                        {
+                        case cppuv::TcpConnection::CloseReason::Remote:
+                            std::cout << "peer disconnected";
+                            break;
+                        case cppuv::TcpConnection::CloseReason::Local:
+                            std::cout << "closed by server";
+                            break;
+                        case cppuv::TcpConnection::CloseReason::Error:
+                            std::cout << "closed after socket error";
+                            break;
+                        case cppuv::TcpConnection::CloseReason::None:
+                            std::cout << "closed";
+                            break;
+                        }
+                        std::cout << " (state=CLOSED)\\n";
 
                         // The close callback runs only after all overlapped
                         // operations have completed, so removing the owning
