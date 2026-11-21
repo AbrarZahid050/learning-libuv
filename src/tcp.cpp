@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -191,7 +192,9 @@ namespace cppuv
         writeOperation_.overlapped = {};
         writeOperation_.buffer.buf = front.data() + writeOffset_;
         writeOperation_.buffer.len = static_cast<ULONG>(
-            std::min<std::size_t>(remaining, ULONG_MAX));
+            std::min<std::size_t>(
+                remaining,
+                static_cast<std::size_t>(std::numeric_limits<ULONG>::max())));
 
         DWORD bytesSent = 0;
         writing_ = true;
