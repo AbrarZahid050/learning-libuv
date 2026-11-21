@@ -16,6 +16,11 @@ namespace cppuv
 
         void listen(unsigned short port);
 
+        [[nodiscard]] SOCKET nativeHandle() const noexcept
+        {
+            return socket_;
+        }
+
     private:
         SOCKET socket_ = INVALID_SOCKET;
     };
