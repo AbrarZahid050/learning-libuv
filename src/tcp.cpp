@@ -59,7 +59,52 @@ namespace cppuv
         handlerRegistered_ = true;
         started_ = true;
         state_ = State::Connected;
+        refreshIdleTimer();
         postRead();
+    }
+
+    void TcpConnection::setIdleTimeout(std::chrono::milliseconds timeout)
+    {
+        if (closed_)
+        {
+            throw std::logic_error("Cannot configure the idle timeout on a closed connection");
+        }
+        if (timeout.count() < 0)
+        {
+            throw std::invalid_argument("TCP idle timeout cannot be negative");
+        }
+
+        idleTimeout_ = timeout;
+        refreshIdleTimer();
+    }
+
+    void TcpConnection::refreshIdleTimer()
+    {
+        if (idleTimer_ != 0)
+        {
+            loop_->clearTimer(idleTimer_);
+            idleTimer_ = 0;
+        }
+
+        if (!started_ || closed_ || idleTimeout_.count() <= 0)
+        {
+            return;
+        }
+
+        const std::weak_ptr<TcpConnection> weakConnection = weak_from_this();
+        idleTimer_ = loop_->callAfter(idleTimeout_, [weakConnection]()
+        {
+            if (auto connection = weakConnection.lock())
+            {
+                connection->idleTimer_ = 0;
+
+                if (!connection->closed_)
+                {
+                    connection->closeReason_ = CloseReason::Timeout;
+                    connection->close();
+                }
+            }
+        });
     }
 
     void TcpConnection::write(std::string data, WriteCallback onWritten)
@@ -125,6 +170,12 @@ namespace cppuv
 
         closed_ = true;
         state_ = State::Closing;
+
+        if (idleTimer_ != 0)
+        {
+            loop_->clearTimer(idleTimer_);
+            idleTimer_ = 0;
+        }
         if (closeReason_ == CloseReason::None)
         {
             closeReason_ = CloseReason::Local;
@@ -294,6 +345,8 @@ namespace cppuv
         const std::string_view data(
             operation.readData.data(),
             completion.bytesTransferred);
+
+        refreshIdleTimer();
 
         if (onData_) onData_(*this, data);
 
