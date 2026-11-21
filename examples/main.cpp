@@ -1,6 +1,7 @@
 #include "cppuv/winsock.hpp"
 #include "cppuv/tcp.hpp"
 #include "cppuv/loop.hpp"
+#include <algorithm>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -65,10 +66,23 @@ int main()
                                 connection->resumeRead();
                             });
                     },
-                    [clientId]()
+                    [&connections, connectionPtr = connection.get(), clientId]()
                     {
                         std::cout << "[client " << clientId
                                   << "] disconnected\n";
+
+                        // The close callback runs only after all overlapped
+                        // operations have completed, so removing the owning
+                        // shared_ptr here is safe.
+                        connections.erase(
+                            std::remove_if(
+                                connections.begin(),
+                                connections.end(),
+                                [connectionPtr](const auto &item)
+                                {
+                                    return item.get() == connectionPtr;
+                                }),
+                            connections.end());
                     },
                     [clientId](const std::error_code &error)
                     {
