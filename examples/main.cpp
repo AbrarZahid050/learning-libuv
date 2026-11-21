@@ -1,6 +1,7 @@
 #include "cppuv/winsock.hpp"
 #include "cppuv/tcp.hpp"
 #include "cppuv/loop.hpp"
+#include <exception>
 #include <iostream>
 #include <system_error>
 
