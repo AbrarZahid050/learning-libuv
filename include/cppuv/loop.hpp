@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "cppuv/poller.hpp"
@@ -7,6 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <queue>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -18,10 +18,19 @@ namespace cppuv
     public:
         using Task = std::function<void()>;
         using TimerId = std::uint64_t;
+        using CompletionHandler = std::function<void(const Completion &)>;
 
         void post(Task task);
 
         void associateHandle(HANDLE handle, ULONG_PTR completionKey);
+
+        void registerCompletionHandler(
+            ULONG_PTR completionKey,
+            CompletionHandler handler);
+
+        void unregisterCompletionHandler(ULONG_PTR completionKey);
+
+        [[nodiscard]] bool isStopping() const;
 
         TimerId callAfter(
             std::chrono::milliseconds delay,
@@ -73,8 +82,9 @@ namespace cppuv
             timers_;
 
         std::unordered_set<TimerId> activeTimerIds_;
+        std::unordered_map<ULONG_PTR, CompletionHandler> completionHandlers_;
 
-        std::mutex mutex_;
+        mutable std::mutex mutex_;
 
         TimerId nextTimerId_ = 1;
         bool stopping_ = false;
