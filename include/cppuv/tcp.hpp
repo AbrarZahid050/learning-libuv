@@ -15,6 +15,7 @@
 #include <array>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -22,7 +23,7 @@
 namespace cppuv
 {
 
-    class TcpConnection
+    class TcpConnection : public std::enable_shared_from_this<TcpConnection>
     {
     public:
         using DataCallback =
@@ -38,6 +39,7 @@ namespace cppuv
         TcpConnection(const TcpConnection &) = delete;
         TcpConnection &operator=(const TcpConnection &) = delete;
 
+        // TcpConnection must be owned by std::shared_ptr before start().
         void start(
             DataCallback onData,
             CloseCallback onClose = {},
@@ -53,42 +55,55 @@ namespace cppuv
             return socket_;
         }
 
-    private:
-        struct ReadOperation
+        [[nodiscard]] bool isClosed() const noexcept
         {
+            return closed_;
+        }
+
+    private:
+        struct IoOperation
+        {
+            enum class Kind { Read, Write };
+
+            explicit IoOperation(Kind operationKind) : kind(operationKind) {}
+
             OVERLAPPED overlapped{};
             WSABUF buffer{};
-            std::array<char, 8192> data{};
+            Kind kind;
+            std::array<char, 8192> readData{};
+            std::shared_ptr<std::string> writeData;
+            std::size_t writeOffset = 0;
         };
 
-        struct WriteOperation
+        struct PendingWrite
         {
-            OVERLAPPED overlapped{};
-            WSABUF buffer{};
+            std::shared_ptr<std::string> data;
+            WriteCallback callback;
+            std::size_t offset = 0;
         };
 
         void postRead();
         void postWrite();
         void handleCompletion(const Completion &completion);
-        void handleRead(const Completion &completion);
-        void handleWrite(const Completion &completion);
-        void fail(int error, const char *operation);
+        void handleRead(IoOperation &operation, const Completion &completion);
+        void handleWrite(IoOperation &operation, const Completion &completion);
+        void fail(int error);
+        void finishCloseIfDrained();
 
         Loop *loop_;
         SOCKET socket_;
-        ReadOperation readOperation_{};
-        WriteOperation writeOperation_{};
-        std::deque<std::string> writes_;
-        std::deque<WriteCallback> writeCallbacks_;
-        std::size_t writeOffset_ = 0;
+        std::deque<PendingWrite> writes_;
         DataCallback onData_;
         CloseCallback onClose_;
         ErrorCallback onError_;
+        std::size_t pendingOperations_ = 0;
         bool started_ = false;
         bool reading_ = false;
         bool readPaused_ = false;
         bool writing_ = false;
         bool closed_ = false;
+        bool handlerRegistered_ = false;
+        bool closeNotified_ = false;
     };
 
     class TcpServer
@@ -111,8 +126,8 @@ namespace cppuv
             ConnectionCallback onConnection,
             ErrorCallback onError = {});
 
-        // Stops accepting. Call from the connection callback to prevent
-        // another accept from being posted.
+        // Stops accepting new clients. A pending AcceptEx is cancelled and
+        // its completion is consumed by the event loop.
         void stopAccepting();
 
         [[nodiscard]] SOCKET nativeHandle() const noexcept
@@ -133,6 +148,7 @@ namespace cppuv
         ErrorCallback onError_;
         AcceptOperation *pendingAccept_ = nullptr;
         bool accepting_ = false;
+        bool handlerRegistered_ = false;
     };
 
 }
