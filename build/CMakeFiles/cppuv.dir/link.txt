@@ -1,0 +1,2 @@
+C:\mingw64\bin\ar.exe qc libcppuv.a CMakeFiles/cppuv.dir/src/loop.cpp.obj CMakeFiles/cppuv.dir/src/poller.cpp.obj CMakeFiles/cppuv.dir/src/winsock.cpp.obj CMakeFiles/cppuv.dir/src/tcp.cpp.obj
+C:\mingw64\bin\ranlib.exe libcppuv.a
