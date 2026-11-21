@@ -127,8 +127,9 @@ namespace cppuv
             ConnectionCallback onConnection,
             ErrorCallback onError = {});
 
-        // Stops accepting new clients. A pending AcceptEx is cancelled and
-        // its completion is consumed by the event loop.
+        // Stops accepting new clients and cancels any pending AcceptEx.
+        // The event loop must continue running until its cancellation
+        // completion is dispatched.
         void stopAccepting();
 
         [[nodiscard]] SOCKET nativeHandle() const noexcept
