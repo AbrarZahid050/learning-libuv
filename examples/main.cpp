@@ -65,9 +65,12 @@ int main()
                         cppuv::TcpConnection &client,
                         std::string_view data)
                     {
+                        // Log the payload size, not its contents. Printing
+                        // large buffers can dominate the time spent in this
+                        // networking example and obscure I/O behaviour.
                         std::cout << "[client " << clientId
                                   << "] received " << data.size()
-                                  << " bytes: " << data << '\n';
+                                  << " bytes\n";
 
                         // Keep reading while a write is in flight. TcpConnection
                         // allows one outstanding read and one outstanding write
