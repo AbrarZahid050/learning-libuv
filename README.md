@@ -1,8 +1,8 @@
 # CppUV
 
-CppUV is a C++20 asynchronous I/O library inspired by libuv. Its goal is to provide a reusable event loop and asynchronous networking APIs behind a consistent C++ interface.
+CppUV is a C++20 asynchronous I/O library inspired by libuv. It provides a reusable event loop and asynchronous networking APIs behind a consistent C++ interface.
 
-> **Current status:** the first backend is Windows-only and uses I/O Completion Ports (IOCP) and Winsock. Linux (epoll) and macOS (kqueue) backends are future work.
+> **Platform:** CppUV is intentionally Windows-only. The implementation uses I/O Completion Ports (IOCP), Winsock, and Windows overlapped I/O. Linux and macOS support are not part of this project.
 
 ## Current capabilities
 
@@ -78,17 +78,12 @@ The umbrella header exposes the current public event-loop, TCP, and Winsock APIs
 ## Project structure
 
 - include/cppuv/ — public C++ headers
-- src/ — library implementation
+- src/ — Windows-specific library implementation
 - cmake/ — CMake package configuration
 - examples/ — example applications
 
 The library target is built independently from the examples. Consumers link to cppuv::cppuv; they do not compile the implementation source files themselves.
 
-## Roadmap
+## Development direction
 
-1. Stabilize the public handle and event-loop APIs.
-2. Add asynchronous UDP and DNS.
-3. Add a worker pool and asynchronous filesystem operations.
-4. Separate platform-independent APIs from OS-specific backends.
-5. Add Linux and macOS backends.
-6. Add automated tests, CI, and release packaging.
+The next library milestones are to stabilize the public handle APIs, add automated tests, and expand Windows asynchronous I/O support with UDP, DNS, worker-pool tasks, asynchronous filesystem operations, named pipes, and process management.
