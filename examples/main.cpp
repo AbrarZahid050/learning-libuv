@@ -17,17 +17,36 @@ int main()
         cppuv::TcpServer server;
         server.listen(8080);
 
-        std::cout << "TCP server listening on port 8080!\n";
+        std::cout << "TCP server listening on 127.0.0.1:8080\n";
 
-        // SOCKET is an unsigned pointer-sized value, while the IOCP API
-        // accepts HANDLE. Convert the native socket handle explicitly.
-        loop.associateHandle(
-            reinterpret_cast<HANDLE>(server.nativeHandle()),
-            1);
+        server.startAccepting(
+            loop,
+            [&loop](SOCKET clientSocket)
+            {
+                std::cout << "Client connected! Socket: "
+                          << clientSocket << '\n';
 
-        std::cout << "TCP socket associated with IOCP!\n";
+                // This example closes the first client and stops the loop.
+                // A real server would create a TcpConnection and keep it.
+                closesocket(clientSocket);
+                loop.stop();
+            },
+            [](const std::error_code &error)
+            {
+                std::cerr << "Accept error: " << error.message() << '\n';
+            });
+
+        std::cout << "Waiting for a client connection...\n";
+        loop.run();
+
+        std::cout << "Event loop stopped.\n";
     }
     catch (const std::system_error &error)
+    {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+    catch (const std::exception &error)
     {
         std::cerr << error.what() << '\n';
         return 1;
