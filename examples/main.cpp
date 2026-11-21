@@ -20,8 +20,8 @@ int main()
         cppuv::Loop loop;
         cppuv::TcpServer server;
 
-        // Keep each connection alive while its overlapped operations are active.
-        // This simple demo retains closed connections until the process exits.
+        // Each pending I/O operation retains its connection. The close callback
+        // removes the application's owning shared_ptr after all I/O has drained.
         std::vector<std::shared_ptr<cppuv::TcpConnection>> connections;
         std::size_t nextClientId = 1;
 
