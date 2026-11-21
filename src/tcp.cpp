@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 #include <system_error>
+#include <utility>
 #include <ws2tcpip.h>
 
 namespace cppuv
