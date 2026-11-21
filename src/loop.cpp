@@ -46,8 +46,8 @@ namespace cppuv
 
         std::lock_guard<std::mutex> lock(mutex_);
 
-        const auto [it, inserted] =
-            completionHandlers_.emplace(completionKey, std::move(handler));
+        const bool inserted =
+            completionHandlers_.emplace(completionKey, std::move(handler)).second;
 
         if (!inserted)
         {
