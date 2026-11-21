@@ -19,8 +19,11 @@ int main()
 
         std::cout << "TCP server listening on port 8080!\n";
 
-        // Associate the TCP socket with our IOCP.
-        loop.associateHandle(server.nativeHandle(), 1);
+        // SOCKET is an unsigned pointer-sized value, while the IOCP API
+        // accepts HANDLE. Convert the native socket handle explicitly.
+        loop.associateHandle(
+            reinterpret_cast<HANDLE>(server.nativeHandle()),
+            1);
 
         std::cout << "TCP socket associated with IOCP!\n";
     }
