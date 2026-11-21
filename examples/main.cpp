@@ -69,18 +69,15 @@ int main()
                                   << "] received " << data.size()
                                   << " bytes: " << data << '\n';
 
-                        // Serialize this demo's read/write cycle. It keeps
-                        // one operation in flight per connection at a time.
-                        client.pauseRead();
-
-                        auto *connection = &client;
+                        // Keep reading while a write is in flight. TcpConnection
+                        // allows one outstanding read and one outstanding write
+                        // at the same time, and queues additional writes in order.
                         client.write(
                             std::string(data),
-                            [connection, clientId]()
+                            [clientId]()
                             {
                                 std::cout << "[client " << clientId
                                           << "] echo sent\n";
-                                connection->resumeRead();
                             });
                     },
                     [&connections, connectionPtr = connection.get(), clientId]()
