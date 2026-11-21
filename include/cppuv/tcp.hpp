@@ -1,10 +1,19 @@
 #pragma once
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <winsock2.h>
+#include <mswsock.h>
+
 #include "cppuv/loop.hpp"
 #include <functional>
-#include <mswsock.h>
 #include <system_error>
-#include <winsock2.h>
 
 namespace cppuv
 {
