@@ -102,7 +102,7 @@ int main()
                             std::cout << "closed";
                             break;
                         }
-                        std::cout << " (state=CLOSED)\\n";
+                        std::cout << " (state=CLOSED)\n";
 
                         // The close callback runs only after all overlapped
                         // operations have completed, so removing the owning
