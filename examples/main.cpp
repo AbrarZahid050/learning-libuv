@@ -2,6 +2,7 @@
 #include "cppuv/tcp.hpp"
 #include "cppuv/loop.hpp"
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -98,6 +99,9 @@ int main()
                         case cppuv::TcpConnection::CloseReason::Error:
                             std::cout << "closed after socket error";
                             break;
+                        case cppuv::TcpConnection::CloseReason::Timeout:
+                            std::cout << "closed after idle timeout";
+                            break;
                         case cppuv::TcpConnection::CloseReason::None:
                             std::cout << "closed";
                             break;
@@ -123,6 +127,9 @@ int main()
                                   << "] connection error: "
                                   << error.message() << '\n';
                     });
+
+                // Close clients that remain inactive for 10 seconds.
+                connection->setIdleTimeout(std::chrono::seconds(10));
             },
             [](const std::error_code &error)
             {
