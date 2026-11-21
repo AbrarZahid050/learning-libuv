@@ -26,6 +26,22 @@ namespace cppuv
     class TcpConnection : public std::enable_shared_from_this<TcpConnection>
     {
     public:
+        enum class State
+        {
+            Created,
+            Connected,
+            Closing,
+            Closed
+        };
+
+        enum class CloseReason
+        {
+            None,
+            Local,
+            Remote,
+            Error
+        };
+
         using DataCallback =
             std::function<void(TcpConnection &, std::string_view)>;
         using WriteCallback = std::function<void()>;
@@ -57,7 +73,17 @@ namespace cppuv
 
         [[nodiscard]] bool isClosed() const noexcept
         {
-            return closed_;
+            return state_ == State::Closed || state_ == State::Closing;
+        }
+
+        [[nodiscard]] State state() const noexcept
+        {
+            return state_;
+        }
+
+        [[nodiscard]] CloseReason closeReason() const noexcept
+        {
+            return closeReason_;
         }
 
     private:
@@ -111,6 +137,8 @@ namespace cppuv
         bool closed_ = false;
         bool handlerRegistered_ = false;
         bool closeNotified_ = false;
+        State state_ = State::Created;
+        CloseReason closeReason_ = CloseReason::None;
     };
 
     class TcpServer
