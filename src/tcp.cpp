@@ -78,11 +78,12 @@ namespace cppuv
             throw std::length_error("TCP write queue size overflow");
         }
 
-        queuedWriteBytes_ += data.size();
+        const auto dataSize = data.size();
         writes_.push_back(PendingWrite{
             std::make_shared<std::string>(std::move(data)),
             std::move(onWritten),
             0});
+        queuedWriteBytes_ += dataSize;
 
         updateReadBackpressure();
         if (!writing_) postWrite();
