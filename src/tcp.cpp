@@ -1,11 +1,11 @@
-#include "cppuv/tcp.hpp"
-#include <algorithm>
-#include <memory>
-#include <limits>
-#include <stdexcept>
-#include <system_error>
-#include <utility>
-#include <ws2tcpip.h>
+#include "cppuv/tcp.hpp" // Include required Windows, C++, and CppUV declarations.
+#include <algorithm> // Include required Windows, C++, and CppUV declarations.
+#include <memory> // Include required Windows, C++, and CppUV declarations.
+#include <limits> // Include required Windows, C++, and CppUV declarations.
+#include <stdexcept> // Include required Windows, C++, and CppUV declarations.
+#include <system_error> // Include required Windows, C++, and CppUV declarations.
+#include <utility> // Include required Windows, C++, and CppUV declarations.
+#include <ws2tcpip.h> // Include required Windows, C++, and CppUV declarations.
 
 namespace cppuv
 {
@@ -47,6 +47,7 @@ namespace cppuv
         onClose_ = std::move(onClose);
         onError_ = std::move(onError);
 
+        // Use this object's address as the IOCP completion-dispatch key.
         const auto completionKey = reinterpret_cast<ULONG_PTR>(this);
         loop_->associateHandle(reinterpret_cast<HANDLE>(socket_), completionKey);
         loop_->registerCompletionHandler(
@@ -204,6 +205,7 @@ namespace cppuv
             loop_->isStopping()) return;
 
         auto operation = std::make_unique<IoOperation>(IoOperation::Kind::Read);
+        // Keep the connection alive while Windows may still access this operation.
         operation->keepAlive = shared_from_this();
         operation->buffer.buf = operation->readData.data();
         operation->buffer.len = static_cast<ULONG>(operation->readData.size());
@@ -342,6 +344,7 @@ namespace cppuv
             return;
         }
 
+        // This view points into the operation buffer and is valid only during the callback.
         const std::string_view data(
             operation.readData.data(),
             completion.bytesTransferred);
@@ -369,6 +372,7 @@ namespace cppuv
 
         auto &pending = writes_.front();
         const auto remaining = pending.data->size() - pending.offset;
+        // A send can be partial; account only for the bytes confirmed by Windows.
         const auto sent = static_cast<std::size_t>(completion.bytesTransferred);
 
         if (sent == 0 || sent > remaining)
@@ -653,6 +657,7 @@ namespace cppuv
 
         DWORD bytesReceived = 0;
 
+        // AcceptEx completes asynchronously and returns its result through IOCP.
         const BOOL result = acceptEx_(
             socket_,
             operation->acceptedSocket,
