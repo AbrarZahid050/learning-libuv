@@ -2,6 +2,7 @@
 
 #include "cppuv/poller.hpp"
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <mutex>
