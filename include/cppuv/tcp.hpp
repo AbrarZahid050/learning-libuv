@@ -13,6 +13,7 @@
 
 #include "cppuv/loop.hpp"
 #include <array>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -39,7 +40,8 @@ namespace cppuv
             None,
             Local,
             Remote,
-            Error
+            Error,
+            Timeout
         };
 
         using DataCallback =
@@ -64,6 +66,7 @@ namespace cppuv
         void write(std::string data, WriteCallback onWritten = {});
         void pauseRead();
         void resumeRead();
+        void setIdleTimeout(std::chrono::milliseconds timeout);
         void close();
 
         [[nodiscard]] SOCKET nativeHandle() const noexcept
@@ -115,6 +118,7 @@ namespace cppuv
         void postRead();
         void postWrite();
         void updateReadBackpressure();
+        void refreshIdleTimer();
         void handleCompletion(const Completion &completion);
         void handleRead(IoOperation &operation, const Completion &completion);
         void handleWrite(IoOperation &operation, const Completion &completion);
@@ -137,6 +141,8 @@ namespace cppuv
         bool closed_ = false;
         bool handlerRegistered_ = false;
         bool closeNotified_ = false;
+        std::chrono::milliseconds idleTimeout_{0};
+        Loop::TimerId idleTimer_ = 0;
         State state_ = State::Created;
         CloseReason closeReason_ = CloseReason::None;
     };
