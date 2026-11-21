@@ -203,6 +203,7 @@ namespace cppuv
     void TcpConnection::handleCompletion(const Completion &completion)
     {
         auto self = shared_from_this();
+        (void)self; // Keep the connection alive until this dispatch returns.
         if (completion.overlapped == nullptr) return;
 
         std::unique_ptr<IoOperation> operation(
@@ -362,15 +363,27 @@ namespace cppuv
 
         if (pendingAccept_ != nullptr)
         {
+            // The loop is no longer guaranteed to dispatch the cancellation
+            // completion during destruction. Keep the OVERLAPPED allocation
+            // alive rather than freeing memory Windows may still reference.
             CancelIoEx(
                 reinterpret_cast<HANDLE>(socket_),
                 &pendingAccept_->overlapped);
-            pendingAccept_ = nullptr;
+
+            if (loop_ != nullptr)
+            {
+                loop_->unregisterCompletionHandler(
+                    reinterpret_cast<ULONG_PTR>(this));
+                loop_ = nullptr;
+            }
+
+            pendingAccept_ = nullptr; // Deliberately orphaned until process exit.
         }
 
         if (socket_ != INVALID_SOCKET)
         {
             closesocket(socket_);
+            socket_ = INVALID_SOCKET;
         }
     }
 
@@ -477,10 +490,21 @@ namespace cppuv
     {
         accepting_ = false;
 
+        if (pendingAccept_ != nullptr && loop_ != nullptr)
+        {
+            // Keep the completion handler registered. It owns cleanup of the
+            // pending AcceptOperation after Windows reports cancellation.
+            CancelIoEx(
+                reinterpret_cast<HANDLE>(socket_),
+                &pendingAccept_->overlapped);
+            return;
+        }
+
         if (loop_ != nullptr)
         {
             loop_->unregisterCompletionHandler(
                 reinterpret_cast<ULONG_PTR>(this));
+            loop_ = nullptr;
         }
     }
 
@@ -552,6 +576,23 @@ namespace cppuv
 
         pendingAccept_ = nullptr;
         std::unique_ptr<AcceptOperation> operationGuard(operation);
+
+        if (!accepting_)
+        {
+            if (operation->acceptedSocket != INVALID_SOCKET)
+            {
+                closesocket(operation->acceptedSocket);
+                operation->acceptedSocket = INVALID_SOCKET;
+            }
+
+            if (loop_ != nullptr)
+            {
+                loop_->unregisterCompletionHandler(
+                    reinterpret_cast<ULONG_PTR>(this));
+                loop_ = nullptr;
+            }
+            return;
+        }
 
         if (!completion.succeeded())
         {
