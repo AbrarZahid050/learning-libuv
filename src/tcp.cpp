@@ -95,6 +95,22 @@ namespace cppuv
         }
     }
 
+    void TcpConnection::pauseRead()
+    {
+        readPaused_ = true;
+    }
+
+    void TcpConnection::resumeRead()
+    {
+        if (closed_)
+        {
+            return;
+        }
+
+        readPaused_ = false;
+        postRead();
+    }
+
     void TcpConnection::close()
     {
         if (closed_)
@@ -126,7 +142,7 @@ namespace cppuv
 
     void TcpConnection::postRead()
     {
-        if (closed_ || reading_ || loop_->isStopping())
+        if (closed_ || reading_ || readPaused_ || loop_->isStopping())
         {
             return;
         }
@@ -249,7 +265,7 @@ namespace cppuv
             onData_(*this, data);
         }
 
-        if (!closed_ && !loop_->isStopping())
+        if (!closed_ && !readPaused_ && !loop_->isStopping())
         {
             postRead();
         }
