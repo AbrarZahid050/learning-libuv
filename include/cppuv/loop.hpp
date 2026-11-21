@@ -45,6 +45,10 @@ namespace cppuv
         void run();
         void stop();
 
+        // Track kernel operations so stop() can drain their IOCP completions.
+        [[nodiscard]] bool beginOperation();
+        void endOperation();
+
     private:
         using Clock = std::chrono::steady_clock;
 
@@ -88,6 +92,7 @@ namespace cppuv
 
         TimerId nextTimerId_ = 1;
         bool stopping_ = false;
+        std::size_t pendingOperations_ = 0;
     };
 
 }
