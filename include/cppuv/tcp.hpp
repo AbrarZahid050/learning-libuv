@@ -44,6 +44,8 @@ namespace cppuv
             ErrorCallback onError = {});
 
         void write(std::string data, WriteCallback onWritten = {});
+        void pauseRead();
+        void resumeRead();
         void close();
 
         [[nodiscard]] SOCKET nativeHandle() const noexcept
@@ -84,6 +86,7 @@ namespace cppuv
         ErrorCallback onError_;
         bool started_ = false;
         bool reading_ = false;
+        bool readPaused_ = false;
         bool writing_ = false;
         bool closed_ = false;
     };
