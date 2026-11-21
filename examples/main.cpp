@@ -8,6 +8,23 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#include <thread>
+#include <windows.h>
+
+namespace
+{
+    HANDLE shutdownEvent = nullptr;
+
+    BOOL WINAPI consoleControlHandler(DWORD control)
+    {
+        if (control == CTRL_C_EVENT || control == CTRL_BREAK_EVENT)
+        {
+            if (shutdownEvent != nullptr) SetEvent(shutdownEvent);
+            return TRUE;
+        }
+        return FALSE;
+    }
+}
 
 int main()
 {
@@ -97,9 +114,60 @@ int main()
             });
 
         std::cout << "Waiting for client connections...\n";
-        loop.run();
 
-        std::cout << "Event loop stopped.\n";
+        shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (shutdownEvent == nullptr)
+        {
+            throw std::system_error(
+                static_cast<int>(GetLastError()),
+                std::system_category(),
+                "Failed to create shutdown event");
+        }
+
+        if (!SetConsoleCtrlHandler(consoleControlHandler, TRUE))
+        {
+            const DWORD error = GetLastError();
+            CloseHandle(shutdownEvent);
+            shutdownEvent = nullptr;
+            throw std::system_error(
+                static_cast<int>(error),
+                std::system_category(),
+                "Failed to register console control handler");
+        }
+
+        // The console handler only signals an event. This worker transfers
+        // shutdown onto the event-loop thread, where socket APIs are used.
+        std::thread shutdownWatcher([&loop, &server, &connections]()
+        {
+            WaitForSingleObject(shutdownEvent, INFINITE);
+
+            loop.post([&loop, &server, &connections]()
+            {
+                std::cout << "\\nShutdown requested. Closing listener and clients...\\n";
+
+                server.stopAccepting();
+
+                // close() callbacks remove entries from connections, so iterate
+                // over a snapshot rather than the vector being modified.
+                const auto activeConnections = connections;
+                for (const auto &connection : activeConnections)
+                {
+                    connection->close();
+                }
+
+                // run() now waits for all cancellation completions before exit.
+                loop.stop();
+            });
+        });
+
+        loop.run();
+        shutdownWatcher.join();
+
+        SetConsoleCtrlHandler(consoleControlHandler, FALSE);
+        CloseHandle(shutdownEvent);
+        shutdownEvent = nullptr;
+
+        std::cout << "All pending I/O has drained. Event loop stopped.\\n";
     }
     catch (const std::system_error &error)
     {
