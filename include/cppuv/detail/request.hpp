@@ -62,11 +62,11 @@ namespace cppuv::detail
             return true;
         }
 
-        // A synchronous submission error means Windows did not accept the
+        // A synchronous submission error means Windows rejected an attempted
         // operation, so no IOCP completion is expected for this request.
         [[nodiscard]] bool markSubmissionFailed() noexcept
         {
-            if (state != State::Created)
+            if (state != State::Submitted)
             {
                 return false;
             }
