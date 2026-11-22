@@ -801,7 +801,15 @@ namespace cppuv
                     static_cast<int>(completion.error),
                     std::system_category());
                 auto callback = onError_;
-                callback(error);
+                try
+                {
+                    callback(error);
+                }
+                catch (...)
+                {
+                    if (lifetime->owner == this) stopAccepting();
+                    throw;
+                }
             }
 
             if (lifetime->owner != this) return;
@@ -829,7 +837,15 @@ namespace cppuv
             {
                 const std::error_code code(error, std::system_category());
                 auto callback = onError_;
-                callback(code);
+                try
+                {
+                    callback(code);
+                }
+                catch (...)
+                {
+                    if (lifetime->owner == this) stopAccepting();
+                    throw;
+                }
             }
 
             if (lifetime->owner != this) return;
@@ -853,6 +869,7 @@ namespace cppuv
         catch (...)
         {
             closesocket(acceptedSocket);
+            if (lifetime->owner == this) stopAccepting();
             throw;
         }
 
