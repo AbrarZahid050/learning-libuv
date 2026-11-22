@@ -209,11 +209,13 @@ namespace cppuv // Keep TCP types in the library namespace.
 
     private:
         struct AcceptOperation; // Keep the Windows-specific overlapped accept details in the implementation file.
+        struct CompletionLifetime; // Keep the completion callback safe if the server wrapper is destroyed.
 
         void postAccept(); // Submit one AcceptEx request when the server is allowed to accept.
         void handleAcceptCompletion(const Completion &completion); // Finish setup and deliver a newly accepted socket.
 
         SOCKET socket_ = INVALID_SOCKET; // Listening socket owned by this server.
+        std::shared_ptr<CompletionLifetime> completionLifetime_; // Keeps pending AcceptEx cleanup alive beyond the wrapper lifetime.
         LPFN_ACCEPTEX acceptEx_ = nullptr; // Function pointer loaded from Winsock for AcceptEx.
         Loop *loop_ = nullptr; // Non-owning pointer; the Loop must outlive active accepting.
         ConnectionCallback onConnection_; // Application callback for successful accepts.
