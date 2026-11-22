@@ -12,22 +12,29 @@
 #include <thread> // Import the library API or Windows/C++ facility used below.
 #include <windows.h> // Import the library API or Windows/C++ facility used below.
 
-    // Keep console-control state and its callback private to this example executable.
+namespace
 {
-    // The watcher thread waits on this event after Ctrl+C or Ctrl+Break.
+    // Shared with the console-control callback and the shutdown watcher thread.
+    HANDLE shutdownEvent = nullptr;
 
-    // Windows invokes this callback when the user requests console shutdown.
+    // Keep the console callback minimal: signal the event and let the loop thread
+    // perform all socket and connection shutdown work.
+    BOOL WINAPI consoleControlHandler(DWORD control)
     {
         if (control == CTRL_C_EVENT || control == CTRL_BREAK_EVENT)
         {
-            if (shutdownEvent != nullptr) SetEvent(shutdownEvent);
+            if (shutdownEvent != nullptr)
+            {
+                SetEvent(shutdownEvent);
+            }
             return TRUE;
         }
+
         return FALSE;
     }
 }
 
-    // Demonstrate the library by running a multi-client asynchronous TCP echo server.
+int main()
 {
     try
     {
