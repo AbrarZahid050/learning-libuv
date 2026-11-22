@@ -1,4 +1,5 @@
 #include "cppuv/cppuv.hpp"
+#include "cppuv/detail/request.hpp"
 
 #include <chrono>
 #include <exception>
@@ -15,6 +16,32 @@ namespace
         {
             throw std::runtime_error(message);
         }
+    }
+
+    void testRequestLifecycle()
+    {
+        cppuv::detail::Request request;
+
+        require(request.state == cppuv::detail::Request::State::Created,
+                "request did not begin in Created state");
+        require(!request.markCompleted(),
+                "request completed before it was submitted");
+        require(request.markSubmitted(),
+                "created request could not be submitted");
+        require(!request.markSubmitted(),
+                "request was submitted more than once");
+        require(request.markCompleted(),
+                "submitted request could not be completed");
+        require(!request.markCompleted(),
+                "request completed more than once");
+
+        cppuv::detail::Request rejectedRequest;
+        require(rejectedRequest.markSubmissionFailed(),
+                "created request could not record submission failure");
+        require(!rejectedRequest.markSubmitted(),
+                "submission-failed request was submitted");
+        require(!rejectedRequest.markCompleted(),
+                "submission-failed request received a completion");
     }
 
     void testPostedTask()
@@ -150,6 +177,7 @@ namespace
 
 int main()
 {
+    testRequestLifecycle();
     testPostedTask();
     testOneShotTimer();
     testCancelledTimer();
