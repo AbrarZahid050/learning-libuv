@@ -192,6 +192,8 @@ namespace cppuv // Keep TCP types in the library namespace.
 
         // Start the asynchronous accept cycle and register it with the supplied loop.
         // The callback takes ownership of each accepted socket.
+        // Once started, serialize lifecycle calls and destruction with the loop thread.
+        // The Loop must outlive this server and dispatch any pending accept completion.
         void startAccepting(
             Loop &loop, // Event loop that receives AcceptEx completion packets.
             ConnectionCallback onConnection, // Called with each newly accepted socket.
