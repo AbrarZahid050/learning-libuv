@@ -1,6 +1,5 @@
 #include "cppuv/cppuv.hpp"
 
-#include <cassert>
 #include <chrono>
 #include <exception>
 #include <iostream>
@@ -10,6 +9,14 @@ using namespace std::chrono_literals;
 
 namespace
 {
+    void require(bool condition, const char *message)
+    {
+        if (!condition)
+        {
+            throw std::runtime_error(message);
+        }
+    }
+
     void testPostedTask()
     {
         cppuv::Loop loop;
@@ -22,7 +29,7 @@ namespace
         });
 
         loop.run();
-        assert(called);
+        require(called, "posted task did not run");
     }
 
     void testOneShotTimer()
@@ -36,9 +43,9 @@ namespace
             loop.stop();
         });
 
-        assert(timer != 0);
+        require(timer != 0, "one-shot timer was not scheduled");
         loop.run();
-        assert(fired);
+        require(fired, "one-shot timer did not fire");
     }
 
     void testCancelledTimer()
@@ -51,7 +58,7 @@ namespace
             cancelledCallbackRan = true;
         });
 
-        assert(cancelled != 0);
+        require(cancelled != 0, "cancelled timer was not scheduled");
         loop.clearTimer(cancelled);
 
         loop.callAfter(10ms, [&]()
@@ -60,7 +67,7 @@ namespace
         });
 
         loop.run();
-        assert(!cancelledCallbackRan);
+        require(!cancelledCallbackRan, "cancelled timer callback ran");
     }
 
     void testCallbackExceptionHandler()
@@ -88,7 +95,7 @@ namespace
         });
 
         loop.run();
-        assert(exceptionReceived);
+        require(exceptionReceived, "exception handler did not receive callback failure");
     }
 
     void testEmptyCallbacksAreRejected()
@@ -115,8 +122,8 @@ namespace
             timerRejected = true;
         }
 
-        assert(postRejected);
-        assert(timerRejected);
+        require(postRejected, "empty posted task was accepted");
+        require(timerRejected, "empty timer callback was accepted");
     }
 
     void testPendingAcceptIsDrainedAfterServerDestruction()
@@ -150,6 +157,6 @@ int main()
     testEmptyCallbacksAreRejected();
     testPendingAcceptIsDrainedAfterServerDestruction();
 
-    std::cout << "All CppUV regression tests passed.\\n";
+    std::cout << "All CppUV regression tests passed.\n";
     return 0;
 }
