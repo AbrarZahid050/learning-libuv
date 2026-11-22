@@ -32,14 +32,20 @@ namespace
                 "request was submitted more than once");
         require(request.markCompleted(),
                 "submitted request could not be completed");
+        require(request.state == cppuv::detail::Request::State::Completed,
+                "request did not enter Completed state");
         require(!request.markCompleted(),
                 "request completed more than once");
 
         cppuv::detail::Request rejectedRequest;
+        require(!rejectedRequest.markSubmissionFailed(),
+                "unsubmitted request recorded a submission failure");
         require(rejectedRequest.markSubmitted(),
                 "request could not enter Submitted before a synchronous rejection");
         require(rejectedRequest.markSubmissionFailed(),
                 "submitted request could not record submission failure");
+        require(rejectedRequest.state == cppuv::detail::Request::State::SubmissionFailed,
+                "request did not enter SubmissionFailed state");
         require(!rejectedRequest.markSubmitted(),
                 "submission-failed request was submitted");
         require(!rejectedRequest.markCompleted(),
