@@ -325,6 +325,15 @@ namespace cppuv
         {
             if (pendingOperations_ > 0) --pendingOperations_;
             loop_->endOperation();
+
+            // A throwing application callback must not leave this connection
+            // open with no receive or send operation scheduled.
+            if (!closed_)
+            {
+                closeReason_ = CloseReason::Error;
+                close();
+            }
+
             finishCloseIfDrained();
             throw;
         }
