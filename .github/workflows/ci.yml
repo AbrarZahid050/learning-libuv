@@ -21,7 +21,7 @@ jobs:
         run: cmake -S . -B build-ci -DCPPUV_BUILD_EXAMPLES=ON -DBUILD_TESTING=ON
 
       - name: Build CppUV and regression tests
-        run: cmake --build-ci build-ci --config Release --parallel
+        run: cmake --build build-ci --config Release --parallel
 
       - name: Run regression tests
         run: ctest --test-dir build-ci -C Release --output-on-failure
