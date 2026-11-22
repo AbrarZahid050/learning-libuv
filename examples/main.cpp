@@ -2,6 +2,7 @@
 #include "cppuv/tcp.hpp" // Import the library API or Windows/C++ facility used below.
 #include "cppuv/loop.hpp" // Import the library API or Windows/C++ facility used below.
 #include <algorithm> // Import the library API or Windows/C++ facility used below.
+#include <atomic> // Store the console signal safely across threads.
 #include <chrono> // Import the library API or Windows/C++ facility used below.
 #include <exception> // Import the library API or Windows/C++ facility used below.
 #include <iostream> // Import the library API or Windows/C++ facility used below.
@@ -16,6 +17,7 @@ namespace
 {
     // Shared with the console-control callback and the shutdown watcher thread.
     HANDLE shutdownEvent = nullptr;
+    std::atomic<DWORD> receivedConsoleControl{0};
 
     // Keep the console callback minimal: signal the event and let the loop thread
     // perform all socket and connection shutdown work.
@@ -23,11 +25,16 @@ namespace
     {
         if (control == CTRL_C_EVENT || control == CTRL_BREAK_EVENT)
         {
-            if (shutdownEvent != nullptr)
+            receivedConsoleControl.store(control, std::memory_order_relaxed);
+
+            if (shutdownEvent != nullptr && SetEvent(shutdownEvent))
             {
-                SetEvent(shutdownEvent);
+                return TRUE;
             }
-            return TRUE;
+
+            // If the event cannot be signalled, let Windows apply its default
+            // handling rather than leaving the process stuck in the event loop.
+            return FALSE;
         }
 
         return FALSE;
@@ -181,9 +188,45 @@ int main()
         // Wait outside the event-loop thread, then post shutdown onto the loop.
         std::thread shutdownWatcher([&loop, &server, &connections]()
         {
-            // Block this worker until the console handler signals shutdown.
-            WaitForSingleObject(shutdownEvent, INFINITE);
+            std::cout << "Shutdown watcher ready; waiting for Ctrl+C or Ctrl+Break...\\n";
 
+            // Block this worker until the console handler signals shutdown.
+            const DWORD waitResult = WaitForSingleObject(shutdownEvent, INFINITE);
+            if (waitResult == WAIT_OBJECT_0)
+            {
+                const DWORD control =
+                    receivedConsoleControl.load(std::memory_order_relaxed);
+
+                if (control == CTRL_C_EVENT)
+                {
+                    std::cout << "Shutdown signal received: CTRL+C.\\n";
+                }
+                else if (control == CTRL_BREAK_EVENT)
+                {
+                    std::cout << "Shutdown signal received: CTRL+BREAK.\\n";
+                }
+                else
+                {
+                    std::cout << "Shutdown event signalled (control code "
+                              << control << ").\\n";
+                }
+            }
+            else if (waitResult == WAIT_FAILED)
+            {
+                const DWORD error = GetLastError();
+                std::cerr << "Shutdown watcher wait failed: "
+                          << std::system_category().message(
+                                 static_cast<int>(error))
+                          << " (Windows error " << error << ").\\n";
+            }
+            else
+            {
+                std::cerr << "Shutdown watcher returned unexpected wait result: "
+                          << waitResult << ".\\n";
+            }
+
+            // Even on a wait failure, request orderly cleanup instead of
+            // leaving main() blocked forever in loop.run().
             // post() safely transfers the shutdown sequence to the loop thread.
             loop.post([&loop, &server, &connections]()
             {
