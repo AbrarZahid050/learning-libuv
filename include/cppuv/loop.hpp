@@ -5,6 +5,7 @@
 #include <cstddef> // Provide std::size_t for operation counters.
 #include <cstdint> // Provide a fixed-width integer type for timer identifiers.
 #include <functional> // Provide std::function for tasks and completion callbacks.
+#include <exception> // Expose callback failures to the configured exception handler.
 #include <mutex> // Protect loop state shared with posting threads.
 #include <queue> // Store tasks and the timer priority queue.
 #include <unordered_map> // Map IOCP completion keys to their callbacks.
@@ -21,9 +22,14 @@ namespace cppuv // Keep the public library API inside its own namespace.
         using Task = std::function<void()>; // A callable scheduled to run on the event-loop thread.
         using TimerId = std::uint64_t; // Stable identifier returned when a timer is scheduled.
         using CompletionHandler = std::function<void(const Completion &)>; // Receives one completed overlapped operation.
+        using ExceptionHandler = std::function<void(std::exception_ptr)>; // Receives exceptions thrown by loop callbacks.
 
         // Queue a callback for execution by the event-loop thread.
         void post(Task task);
+
+        // Configure how exceptions from tasks, timers, and completion handlers are reported.
+        // If no handler is configured, an uncaught callback exception stops the loop.
+        void setExceptionHandler(ExceptionHandler handler);
 
         // Associate a Windows handle with this loop's IOCP instance.
         // The completion key selects the registered callback for that handle.
@@ -90,6 +96,9 @@ namespace cppuv // Keep the public library API inside its own namespace.
             }
         };
 
+        // Report a callback exception without allowing it to escape the event-loop dispatcher.
+        void handleCallbackException(std::exception_ptr exception);
+
         // Shared implementation for one-shot and repeating timer creation.
         TimerId scheduleTimer(
             std::chrono::milliseconds delay, // Initial delay before the first execution.
@@ -109,6 +118,7 @@ namespace cppuv // Keep the public library API inside its own namespace.
 
         std::unordered_set<TimerId> activeTimerIds_; // Membership identifies timers that have not been cancelled.
         std::unordered_map<ULONG_PTR, CompletionHandler> completionHandlers_; // Dispatch table keyed by IOCP completion key.
+        ExceptionHandler exceptionHandler_; // Optional application callback for exceptions from dispatched work.
 
         mutable std::mutex mutex_; // Protect queues, callbacks, timer IDs, and shutdown state across threads.
 

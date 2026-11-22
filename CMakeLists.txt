@@ -7,6 +7,7 @@ project(cppuv # Define the library project and its package identity.
 )
 
 include(GNUInstallDirs) # Use platform-aware standard installation directories.
+include(CTest) # Enable CTest so library behavior can be verified automatically.
 include(CMakePackageConfigHelpers) # Generate find_package-compatible package metadata.
 
 option(CPPUV_BUILD_EXAMPLES "Build CppUV example applications" ON) # Let consumers build only the library when desired.
@@ -90,3 +91,7 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/cppuvConfigVersion.cmake # Install the package version compatibility file.
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/cppuv # Keep all package metadata in one directory.
 )
+
+if(BUILD_TESTING) # Build focused regression tests when CTest is enabled.
+    add_subdirectory(tests) # Keep test targets separate from the library and examples.
+endif()
