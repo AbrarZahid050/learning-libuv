@@ -497,10 +497,10 @@ namespace cppuv
         }
     }
 
-    // Store the AcceptEx OVERLAPPED structure and address buffer together.
+    // Store the AcceptEx request and address buffer together.
     struct TcpServer::AcceptOperation
     {
-        OVERLAPPED overlapped{};
+        detail::Request request{};
         SOCKET acceptedSocket = INVALID_SOCKET;
 
         static constexpr DWORD addressLength =
@@ -512,6 +512,11 @@ namespace cppuv
     // Keep the accept completion dispatchable after TcpServer itself is destroyed.
     struct TcpServer::CompletionLifetime
     {
+        static_assert(std::is_standard_layout_v<AcceptOperation>,
+                      "Accept operation must remain standard-layout");
+        static_assert(offsetof(AcceptOperation, request) == 0,
+                      "Request must remain the first accept-operation member");
+
         TcpServer *owner = nullptr;
         Loop *loop = nullptr;
         ULONG_PTR completionKey = 0;
@@ -527,11 +532,12 @@ namespace cppuv
             }
 
             if (!detached || loop == nullptr || operation == nullptr ||
-                completion.overlapped != &operation->overlapped)
+                completion.overlapped != &operation->request.overlapped)
             {
                 return;
             }
 
+            const bool lifecycleValid = operation->request.markCompleted();
             std::unique_ptr<AcceptOperation> completed(operation);
             operation = nullptr;
 
@@ -543,6 +549,12 @@ namespace cppuv
 
             loop->endOperation();
             loop->unregisterCompletionHandler(completionKey);
+
+            if (!lifecycleValid)
+            {
+                throw std::logic_error(
+                    "Detached AcceptEx completion received for a request that was not submitted");
+            }
         }
     };
 
@@ -712,7 +724,7 @@ namespace cppuv
             // pending AcceptOperation after Windows reports cancellation.
             CancelIoEx(
                 reinterpret_cast<HANDLE>(socket_),
-                &pendingAccept_->overlapped);
+                &pendingAccept_->request.overlapped);
             return;
         }
 
@@ -759,6 +771,14 @@ namespace cppuv
 
         DWORD bytesReceived = 0;
 
+        if (!operation->request.markSubmitted())
+        {
+            closesocket(operation->acceptedSocket);
+            operation->acceptedSocket = INVALID_SOCKET;
+            loop_->endOperation();
+            throw std::logic_error("AcceptEx request was already submitted");
+        }
+
         // Transfer ownership before submission: a completion may be dequeued
         // immediately by another thread after AcceptEx queues its packet.
         AcceptOperation *submittedOperation = operation.release();
@@ -774,7 +794,7 @@ namespace cppuv
             AcceptOperation::addressLength,
             AcceptOperation::addressLength,
             &bytesReceived,
-            &submittedOperation->overlapped);
+            &submittedOperation->request.overlapped);
 
         if (!result)
         {
@@ -782,12 +802,21 @@ namespace cppuv
 
             if (error != WSA_IO_PENDING)
             {
+                const bool lifecycleValid =
+                    submittedOperation->request.markSubmissionFailed();
+
                 pendingAccept_ = nullptr;
                 completionLifetime_->operation = nullptr;
                 std::unique_ptr<AcceptOperation> failedOperation(submittedOperation);
                 closesocket(failedOperation->acceptedSocket);
                 failedOperation->acceptedSocket = INVALID_SOCKET;
                 loop_->endOperation();
+
+                if (!lifecycleValid)
+                {
+                    throw std::logic_error(
+                        "AcceptEx request could not record submission failure");
+                }
 
                 throw std::system_error(
                     error,
@@ -799,10 +828,17 @@ namespace cppuv
 
     void TcpServer::handleAcceptCompletion(const Completion &completion)
     {
-        auto *operation =
-            reinterpret_cast<AcceptOperation *>(completion.overlapped);
+        if (completion.overlapped == nullptr)
+        {
+            return;
+        }
 
-        if (operation == nullptr || operation != pendingAccept_)
+        // OVERLAPPED is the first Request member, and Request is the first
+        // AcceptOperation member; the layout assertions make this recovery valid.
+        auto *request = reinterpret_cast<detail::Request *>(completion.overlapped);
+        auto *operation = reinterpret_cast<AcceptOperation *>(request);
+
+        if (operation != pendingAccept_)
         {
             return;
         }
@@ -811,7 +847,21 @@ namespace cppuv
         completionLifetime_->operation = nullptr;
         const auto lifetime = completionLifetime_;
         std::unique_ptr<AcceptOperation> operationGuard(operation);
+        const bool lifecycleValid = operation->request.markCompleted();
         loop_->endOperation();
+
+        if (!lifecycleValid)
+        {
+            if (operation->acceptedSocket != INVALID_SOCKET)
+            {
+                closesocket(operation->acceptedSocket);
+                operation->acceptedSocket = INVALID_SOCKET;
+            }
+
+            if (accepting_) stopAccepting();
+            throw std::logic_error(
+                "AcceptEx completion received for a request that was not submitted");
+        }
 
         if (!accepting_)
         {
