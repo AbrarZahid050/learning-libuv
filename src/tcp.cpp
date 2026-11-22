@@ -225,13 +225,21 @@ namespace cppuv
         reading_ = true;
         ++pendingOperations_;
 
+        if (!operation->request.markSubmitted())
+        {
+            reading_ = false;
+            --pendingOperations_;
+            loop_->endOperation();
+            throw std::logic_error("TCP read request was already submitted");
+        }
+
         const int result = WSARecv(
             socket_,
             &operation->buffer,
             1,
             &bytesReceived,
             &flags,
-            &operation->overlapped,
+            &operation->request.overlapped,
             nullptr);
 
         if (result == SOCKET_ERROR)
@@ -239,6 +247,14 @@ namespace cppuv
             const int error = WSAGetLastError();
             if (error != WSA_IO_PENDING)
             {
+                if (!operation->request.markSubmissionFailed())
+                {
+                    reading_ = false;
+                    --pendingOperations_;
+                    loop_->endOperation();
+                    throw std::logic_error("TCP read request could not record submission failure");
+                }
+
                 reading_ = false;
                 --pendingOperations_;
                 loop_->endOperation();
@@ -275,13 +291,21 @@ namespace cppuv
         writing_ = true;
         ++pendingOperations_;
 
+        if (!operation->request.markSubmitted())
+        {
+            writing_ = false;
+            --pendingOperations_;
+            loop_->endOperation();
+            throw std::logic_error("TCP write request was already submitted");
+        }
+
         const int result = WSASend(
             socket_,
             &operation->buffer,
             1,
             &bytesSent,
             0,
-            &operation->overlapped,
+            &operation->request.overlapped,
             nullptr);
 
         if (result == SOCKET_ERROR)
@@ -289,6 +313,14 @@ namespace cppuv
             const int error = WSAGetLastError();
             if (error != WSA_IO_PENDING)
             {
+                if (!operation->request.markSubmissionFailed())
+                {
+                    writing_ = false;
+                    --pendingOperations_;
+                    loop_->endOperation();
+                    throw std::logic_error("TCP write request could not record submission failure");
+                }
+
                 writing_ = false;
                 --pendingOperations_;
                 loop_->endOperation();
@@ -307,11 +339,17 @@ namespace cppuv
         (void)self; // Keep the connection alive until this dispatch returns.
         if (completion.overlapped == nullptr) return;
 
+        auto *request = reinterpret_cast<detail::Request *>(completion.overlapped);
         std::unique_ptr<IoOperation> operation(
-            reinterpret_cast<IoOperation *>(completion.overlapped));
+            reinterpret_cast<IoOperation *>(request));
 
         try
         {
+            if (!operation->request.markCompleted())
+            {
+                throw std::logic_error("TCP completion received for a request that was not submitted");
+            }
+
             if (operation->kind == IoOperation::Kind::Read)
             {
                 handleRead(*operation, completion);
