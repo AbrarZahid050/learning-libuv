@@ -339,6 +339,8 @@ namespace cppuv
         (void)self; // Keep the connection alive until this dispatch returns.
         if (completion.overlapped == nullptr) return;
 
+        // OVERLAPPED is the first Request member, and Request is the first
+        // IoOperation member; the layout assertions make this recovery valid.
         auto *request = reinterpret_cast<detail::Request *>(completion.overlapped);
         std::unique_ptr<IoOperation> operation(
             reinterpret_cast<IoOperation *>(request));
