@@ -460,8 +460,46 @@ namespace cppuv
         std::array<char, addressLength * 2> addressBuffer{};
     };
 
+    // Keep the accept completion dispatchable after TcpServer itself is destroyed.
+    struct TcpServer::CompletionLifetime
+    {
+        TcpServer *owner = nullptr;
+        Loop *loop = nullptr;
+        ULONG_PTR completionKey = 0;
+        AcceptOperation *operation = nullptr;
+        bool detached = false;
+
+        void dispatch(const Completion &completion)
+        {
+            if (owner != nullptr)
+            {
+                owner->handleAcceptCompletion(completion);
+                return;
+            }
+
+            if (!detached || loop == nullptr || operation == nullptr ||
+                completion.overlapped != &operation->overlapped)
+            {
+                return;
+            }
+
+            std::unique_ptr<AcceptOperation> completed(operation);
+            operation = nullptr;
+
+            if (completed->acceptedSocket != INVALID_SOCKET)
+            {
+                closesocket(completed->acceptedSocket);
+                completed->acceptedSocket = INVALID_SOCKET;
+            }
+
+            loop->endOperation();
+            loop->unregisterCompletionHandler(completionKey);
+        }
+    };
+
     // Create an overlapped IPv4 TCP listening socket.
     TcpServer::TcpServer()
+        : completionLifetime_(std::make_shared<CompletionLifetime>())
     {
         socket_ = WSASocketW(
             AF_INET,
@@ -478,36 +516,28 @@ namespace cppuv
                 std::system_category(),
                 "Failed to create TCP socket");
         }
+
+        completionLifetime_->owner = this;
     }
 
-    // Stop accepting and release the listening socket.
+    // Cancel pending accepts without freeing memory still owned by Windows.
     TcpServer::~TcpServer()
     {
         stopAccepting();
 
+        completionLifetime_->owner = nullptr;
+
         if (pendingAccept_ != nullptr)
         {
-            // The loop is no longer guaranteed to dispatch the cancellation
-            // completion during destruction. Keep the OVERLAPPED allocation
-            // alive rather than freeing memory Windows may still reference.
-            CancelIoEx(
-                reinterpret_cast<HANDLE>(socket_),
-                &pendingAccept_->overlapped);
-
-            if (pendingAccept_->acceptedSocket != INVALID_SOCKET)
-            {
-                closesocket(pendingAccept_->acceptedSocket);
-                pendingAccept_->acceptedSocket = INVALID_SOCKET;
-            }
-
-            if (loop_ != nullptr)
-            {
-                loop_->unregisterCompletionHandler(
-                    reinterpret_cast<ULONG_PTR>(this));
-                loop_ = nullptr;
-            }
-
-            pendingAccept_ = nullptr; // Deliberately orphaned until process exit.
+            // The registered completion callback retains CompletionLifetime.
+            // It will release the OVERLAPPED operation and decrement the loop's
+            // pending-operation count after Windows reports completion.
+            completionLifetime_->loop = loop_;
+            completionLifetime_->completionKey = reinterpret_cast<ULONG_PTR>(this);
+            completionLifetime_->operation = pendingAccept_;
+            completionLifetime_->detached = true;
+            pendingAccept_ = nullptr;
+            loop_ = nullptr;
         }
 
         if (socket_ != INVALID_SOCKET)
@@ -587,6 +617,10 @@ namespace cppuv
         }
 
         loop_ = &loop;
+        completionLifetime_->owner = this;
+        completionLifetime_->loop = &loop;
+        completionLifetime_->completionKey = reinterpret_cast<ULONG_PTR>(this);
+        completionLifetime_->detached = false;
         onConnection_ = std::move(onConnection);
         onError_ = std::move(onError);
 
@@ -598,11 +632,12 @@ namespace cppuv
                 reinterpret_cast<HANDLE>(socket_),
                 completionKey);
 
+            const auto lifetime = completionLifetime_;
             loop_->registerCompletionHandler(
                 completionKey,
-                [this](const Completion &completion)
+                [lifetime](const Completion &completion)
                 {
-                    handleAcceptCompletion(completion);
+                    lifetime->dispatch(completion);
                 });
 
             accepting_ = true;
@@ -675,16 +710,22 @@ namespace cppuv
 
         DWORD bytesReceived = 0;
 
+        // Transfer ownership before submission: a completion may be dequeued
+        // immediately by another thread after AcceptEx queues its packet.
+        AcceptOperation *submittedOperation = operation.release();
+        pendingAccept_ = submittedOperation;
+        completionLifetime_->operation = submittedOperation;
+
         // AcceptEx completes asynchronously and returns its result through IOCP.
         const BOOL result = acceptEx_(
             socket_,
-            operation->acceptedSocket,
-            operation->addressBuffer.data(),
+            submittedOperation->acceptedSocket,
+            submittedOperation->addressBuffer.data(),
             0,
             AcceptOperation::addressLength,
             AcceptOperation::addressLength,
             &bytesReceived,
-            &operation->overlapped);
+            &submittedOperation->overlapped);
 
         if (!result)
         {
@@ -692,7 +733,11 @@ namespace cppuv
 
             if (error != WSA_IO_PENDING)
             {
-                closesocket(operation->acceptedSocket);
+                pendingAccept_ = nullptr;
+                completionLifetime_->operation = nullptr;
+                std::unique_ptr<AcceptOperation> failedOperation(submittedOperation);
+                closesocket(failedOperation->acceptedSocket);
+                failedOperation->acceptedSocket = INVALID_SOCKET;
                 loop_->endOperation();
 
                 throw std::system_error(
@@ -701,8 +746,6 @@ namespace cppuv
                     "AcceptEx failed to start");
             }
         }
-
-        pendingAccept_ = operation.release();
     }
 
     void TcpServer::handleAcceptCompletion(const Completion &completion)
@@ -716,6 +759,8 @@ namespace cppuv
         }
 
         pendingAccept_ = nullptr;
+        completionLifetime_->operation = nullptr;
+        const auto lifetime = completionLifetime_;
         std::unique_ptr<AcceptOperation> operationGuard(operation);
         loop_->endOperation();
 
@@ -746,8 +791,11 @@ namespace cppuv
                 const std::error_code error(
                     static_cast<int>(completion.error),
                     std::system_category());
-                onError_(error);
+                auto callback = onError_;
+                callback(error);
             }
+
+            if (lifetime->owner != this) return;
 
             if (accepting_ && loop_ != nullptr && !loop_->isStopping())
             {
@@ -771,8 +819,11 @@ namespace cppuv
             if (onError_)
             {
                 const std::error_code code(error, std::system_category());
-                onError_(code);
+                auto callback = onError_;
+                callback(code);
             }
+
+            if (lifetime->owner != this) return;
 
             if (accepting_ && loop_ != nullptr && !loop_->isStopping())
             {
@@ -787,13 +838,17 @@ namespace cppuv
 
         try
         {
-            onConnection_(acceptedSocket);
+            auto callback = onConnection_;
+            callback(acceptedSocket);
         }
         catch (...)
         {
             closesocket(acceptedSocket);
             throw;
         }
+
+        // The callback is allowed to destroy the TcpServer wrapper.
+        if (lifetime->owner != this) return;
 
         if (accepting_ && loop_ != nullptr && !loop_->isStopping())
         {
