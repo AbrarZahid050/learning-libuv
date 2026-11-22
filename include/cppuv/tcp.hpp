@@ -12,7 +12,10 @@
 #include <mswsock.h> // Provide the AcceptEx extension-function declarations.
 
 #include "cppuv/loop.hpp" // TCP operations are submitted to and completed by a Loop.
+#include "cppuv/detail/request.hpp" // Reuse the internal lifecycle and OVERLAPPED owner for TCP I/O.
 #include <array> // Own fixed-size buffers used by overlapped reads and AcceptEx.
+#include <cstddef> // Provide offsetof for the operation layout invariant.
+#include <type_traits> // Verify that the operation context has a standard layout.
 #include <chrono> // Express the optional TCP idle timeout.
 #include <deque> // Preserve the order of writes waiting to be sent.
 #include <functional> // Define data, close, write, connection, and error callbacks.
@@ -119,7 +122,7 @@ namespace cppuv // Keep TCP types in the library namespace.
 
             explicit IoOperation(Kind operationKind) : kind(operationKind) {} // Record whether this request receives or sends bytes.
 
-            OVERLAPPED overlapped{}; // Windows writes completion metadata into this structure.
+            detail::Request request{}; // Own the OVERLAPPED structure and track this operation's lifecycle.
             WSABUF buffer{}; // Describe the memory region passed to WSARecv or WSASend.
             Kind kind; // Remember which operation-specific completion path to execute.
             std::array<char, 8192> readData{}; // Keep receive memory alive until Windows reports completion.
@@ -127,6 +130,11 @@ namespace cppuv // Keep TCP types in the library namespace.
             std::shared_ptr<TcpConnection> keepAlive; // Prevent destruction while this operation is outstanding.
             std::size_t writeOffset = 0; // Track the offset submitted when a partial write is retried.
         };
+
+        static_assert(std::is_standard_layout_v<IoOperation>,
+                      "TCP I/O operation must remain standard-layout");
+        static_assert(offsetof(IoOperation, request) == 0,
+                      "Request must remain the first TCP I/O operation member");
 
         // Store an application write until all of its bytes have been transmitted.
         struct PendingWrite
