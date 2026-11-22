@@ -10,7 +10,7 @@ on:
       - main
 
 jobs:
-  build-and-test:
+  build-ci-and-test:
     runs-on: windows-latest
 
     steps:
@@ -18,10 +18,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure CppUV
-        run: cmake -S . -B build -DCPPUV_BUILD_EXAMPLES=ON -DBUILD_TESTING=ON
+        run: cmake -S . -B build-ci -DCPPUV_BUILD_EXAMPLES=ON -DBUILD_TESTING=ON
 
       - name: Build CppUV and regression tests
-        run: cmake --build build --config Release --parallel
+        run: cmake --build-ci build-ci --config Release --parallel
 
       - name: Run regression tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build-ci -C Release --output-on-failure
