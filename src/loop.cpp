@@ -10,6 +10,11 @@ namespace cppuv // Define the implementation in the library namespace.
     // Enqueue application work so it executes on the event-loop thread.
     void Loop::post(Task task)
     {
+        if (!task)
+        {
+            throw std::invalid_argument("Cannot post an empty task");
+        }
+
         {
             std::lock_guard<std::mutex> lock(mutex_); // Protect the queue and shutdown flag from concurrent callers.
 
@@ -22,6 +27,38 @@ namespace cppuv // Define the implementation in the library namespace.
         } // Release the mutex before waking the event loop.
 
         poller_.wake(); // Interrupt an IOCP wait so the loop notices the newly queued task.
+    }
+
+    // Configure the policy for exceptions thrown by application callbacks.
+    void Loop::setExceptionHandler(ExceptionHandler handler)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        exceptionHandler_ = std::move(handler);
+    }
+
+    // Report callback failures without allowing them to escape the event-loop dispatcher.
+    void Loop::handleCallbackException(std::exception_ptr exception)
+    {
+        ExceptionHandler handler;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            handler = exceptionHandler_;
+        }
+
+        if (!handler)
+        {
+            stop();
+            return;
+        }
+
+        try
+        {
+            handler(exception);
+        }
+        catch (...)
+        {
+            stop();
+        }
     }
 
     // Associate a native Windows handle with this loop's completion port.
@@ -79,6 +116,11 @@ namespace cppuv // Define the implementation in the library namespace.
         bool repeating, // Select one-shot or recurring behavior.
         Task task) // Callback retained by the timer.
     {
+        if (!task)
+        {
+            throw std::invalid_argument("Cannot schedule an empty timer callback");
+        }
+
         TimerId id; // Store the identifier that will be returned to the caller.
 
         {
@@ -244,13 +286,27 @@ namespace cppuv // Define the implementation in the library namespace.
 
             if (hasTask) // A posted callback was selected above.
             {
-                task(); // Execute user code without holding the loop mutex.
+                try
+                {
+                    task(); // Execute user code without holding the loop mutex.
+                }
+                catch (...)
+                {
+                    handleCallbackException(std::current_exception());
+                }
                 continue; // Start a fresh scheduling pass after the callback returns.
             }
 
             if (hasTimer) // An expired timer was selected above.
             {
-                timer.task(); // Execute the timer callback on the event-loop thread.
+                try
+                {
+                    timer.task(); // Execute the timer callback on the event-loop thread.
+                }
+                catch (...)
+                {
+                    handleCallbackException(std::current_exception());
+                }
 
                 if (timer.repeating) // Reschedule only recurring timers.
                 {
@@ -288,7 +344,14 @@ namespace cppuv // Define the implementation in the library namespace.
 
             if (handler) // Dispatch only when a handler is still registered.
             {
-                handler(*completion); // Let the owning handle process its completed operation.
+                try
+                {
+                    handler(*completion); // Let the owning handle process its completed operation.
+                }
+                catch (...)
+                {
+                    handleCallbackException(std::current_exception());
+                }
             }
         }
     }
