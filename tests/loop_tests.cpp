@@ -36,12 +36,16 @@ namespace
                 "request completed more than once");
 
         cppuv::detail::Request rejectedRequest;
+        require(rejectedRequest.markSubmitted(),
+                "request could not enter Submitted before a synchronous rejection");
         require(rejectedRequest.markSubmissionFailed(),
-                "created request could not record submission failure");
+                "submitted request could not record submission failure");
         require(!rejectedRequest.markSubmitted(),
                 "submission-failed request was submitted");
         require(!rejectedRequest.markCompleted(),
                 "submission-failed request received a completion");
+        require(!rejectedRequest.markSubmissionFailed(),
+                "submission failure was recorded more than once");
     }
 
     void testPostedTask()
