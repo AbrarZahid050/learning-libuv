@@ -36,6 +36,34 @@ cmake -S . -B build -G "MinGW Makefiles" -DCPPUV_BUILD_EXAMPLES=OFF
 cmake --build build
 ```
 
+## Run regression tests
+
+CTest is enabled by default. Use a separate build directory so existing generated files under `build/` are not reused:
+
+```powershell
+cmake -S . -B build-tests -G "MinGW Makefiles" -DBUILD_TESTING=ON
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
+
+The regression tests cover task dispatch, timer scheduling and cancellation, callback exception handling, empty callback validation, and draining a pending `AcceptEx` operation after its `TcpServer` wrapper is destroyed.
+
+## Callback exceptions
+
+Configure an exception handler to receive exceptions thrown by posted tasks, timers, or completion callbacks:
+
+```cpp
+loop.setExceptionHandler([](std::exception_ptr error) {
+    try {
+        std::rethrow_exception(error);
+    } catch (const std::exception &exception) {
+        // Log or report exception.what().
+    }
+});
+```
+
+If no exception handler is configured, an uncaught callback exception requests loop shutdown. Outstanding overlapped I/O is still dispatched and drained.
+
 ## Install
 
 Install into a local directory:
