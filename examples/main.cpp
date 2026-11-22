@@ -188,7 +188,7 @@ int main()
         // Wait outside the event-loop thread, then post shutdown onto the loop.
         std::thread shutdownWatcher([&loop, &server, &connections]()
         {
-            std::cout << "Shutdown watcher ready; waiting for Ctrl+C or Ctrl+Break...\\n";
+            std::cout << "Shutdown watcher ready; waiting for Ctrl+C or Ctrl+Break...\n";
 
             // Block this worker until the console handler signals shutdown.
             const DWORD waitResult = WaitForSingleObject(shutdownEvent, INFINITE);
@@ -199,16 +199,16 @@ int main()
 
                 if (control == CTRL_C_EVENT)
                 {
-                    std::cout << "Shutdown signal received: CTRL+C.\\n";
+                    std::cout << "Shutdown signal received: CTRL+C.\n";
                 }
                 else if (control == CTRL_BREAK_EVENT)
                 {
-                    std::cout << "Shutdown signal received: CTRL+BREAK.\\n";
+                    std::cout << "Shutdown signal received: CTRL+BREAK.\n";
                 }
                 else
                 {
                     std::cout << "Shutdown event signalled (control code "
-                              << control << ").\\n";
+                              << control << ").\n";
                 }
             }
             else if (waitResult == WAIT_FAILED)
@@ -217,12 +217,12 @@ int main()
                 std::cerr << "Shutdown watcher wait failed: "
                           << std::system_category().message(
                                  static_cast<int>(error))
-                          << " (Windows error " << error << ").\\n";
+                          << " (Windows error " << error << ").\n";
             }
             else
             {
                 std::cerr << "Shutdown watcher returned unexpected wait result: "
-                          << waitResult << ".\\n";
+                          << waitResult << ".\n";
             }
 
             // Even on a wait failure, request orderly cleanup instead of
